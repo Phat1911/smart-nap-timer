@@ -1,0 +1,77 @@
+{
+  "expo": {
+    "name": "Smart Nap Timer",
+    "slug": "smart-nap-timer",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0a0a0f"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.hongphat.smartnaptimer",
+      "infoPlist": {
+        "NSMotionUsageDescription": "Smart Nap Timer uses motion sensors to detect when you fall asleep.",
+        "NSMicrophoneUsageDescription": "Smart Nap Timer uses the microphone to detect your breathing pattern for more accurate sleep detection.",
+        "UIBackgroundModes": [
+          "fetch",
+          "remote-notification",
+          "audio"
+        ]
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0a0a0f"
+      },
+      "package": "com.hongphat.smartnaptimer",
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.VIBRATE",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.USE_EXACT_ALARM",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "android.permission.WAKE_LOCK",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#6c63ff",
+          "sounds": [
+            "./assets/sounds/alarm.wav"
+          ]
+        }
+      ],
+      "expo-av",
+      [
+        "expo-sensors",
+        {
+          "motionPermission": "Smart Nap Timer uses motion sensors to detect when you fall asleep."
+        }
+      ]
+    ],
+    "scheme": "smartnaptimer",
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "d23bc949-943d-4961-aae6-6d8405ba7970"
+      }
+    },
+    "owner": "phat1911"
+  }
+}
