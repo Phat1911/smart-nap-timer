@@ -1,17 +1,20 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView,
-  TouchableOpacity, Switch, SafeAreaView, Alert, Share,
+  TouchableOpacity, Switch, Alert, Share,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useRef } from 'react';
+import { Audio } from 'expo-av';
 import { Colors } from '../constants';
 import { sessionService } from '../services/SessionService';
 import { audioService } from '../services/AudioService';
+import { getAlarmSound, setAlarmSound } from '../services/SettingsService';
 import { useTier } from '../hooks/useTier';
 import { RootStackParamList } from '../navigation/AppNavigator';
+import { ALARM_SOUNDS, AlarmSoundId } from '../constants/config';
 import type { SoundType } from '../services/AudioService';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -29,12 +32,43 @@ type Sensitivity = typeof SENSITIVITIES[number];
 export default function SettingsScreen() {
   const navigation = useNavigation<Nav>();
   const { limits } = useTier();
-  const [selectedSound, setSelectedSound] = useState<SoundType>('rain');
-  const [volume, setVolume] = useState(0.4);
-  const [sensitivity, setSensitivity] = useState<Sensitivity>('Medium');
-  const [micEnabled, setMicEnabled] = useState(true);
-  const [accelEnabled, setAccelEnabled] = useState(true);
-  const [notifEnabled, setNotifEnabled] = useState(true);
+  const [selectedSound,    setSelectedSound]    = useState<SoundType>('rain');
+  const [volume,           setVolume]           = useState(0.4);
+  const [sensitivity,      setSensitivity]      = useState<Sensitivity>('Medium');
+  const [micEnabled,       setMicEnabled]       = useState(true);
+  const [accelEnabled,     setAccelEnabled]     = useState(true);
+  const [notifEnabled,     setNotifEnabled]     = useState(true);
+  const [selectedAlarm,    setSelectedAlarm]    = useState<AlarmSoundId>('alarm');
+  const previewSoundRef = useRef<Audio.Sound | null>(null);
+
+  useEffect(() => {
+    getAlarmSound().then(setSelectedAlarm).catch(() => {});
+  }, []);
+
+  async function handleAlarmSelect(id: AlarmSoundId) {
+    setSelectedAlarm(id);
+    await setAlarmSound(id).catch(() => {});
+  }
+
+  async function handleAlarmPreview(file: number) {
+    // Stop any existing preview
+    if (previewSoundRef.current) {
+      await previewSoundRef.current.stopAsync().catch(() => {});
+      await previewSoundRef.current.unloadAsync().catch(() => {});
+      previewSoundRef.current = null;
+    }
+    try {
+      const { sound } = await Audio.Sound.createAsync(file, { volume: 0.8, shouldPlay: true });
+      previewSoundRef.current = sound;
+      setTimeout(async () => {
+        await sound.stopAsync().catch(() => {});
+        await sound.unloadAsync().catch(() => {});
+        if (previewSoundRef.current === sound) previewSoundRef.current = null;
+      }, 3000);
+    } catch {
+      // Preview unavailable
+    }
+  }
 
   // 3.13 — Reset learning data
   function confirmReset() {
@@ -80,12 +114,51 @@ export default function SettingsScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.root}>
+    <SafeAreaView style={styles.root} edges={['top']}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Settings</Text>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
+
+        {/* Alarm Sound */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Alarm Sound</Text>
+          <View style={styles.card}>
+            {ALARM_SOUNDS.map((item, index) => {
+              const active = selectedAlarm === item.id;
+              return (
+                <React.Fragment key={item.id}>
+                  {index > 0 && <View style={styles.divider} />}
+                  <View style={styles.alarmRow}>
+                    <TouchableOpacity
+                      style={styles.alarmLeft}
+                      onPress={() => handleAlarmSelect(item.id)}
+                      activeOpacity={0.7}
+                    >
+                      <MaterialCommunityIcons
+                        name={active ? 'check-circle' : 'circle-outline'}
+                        size={20}
+                        color={active ? Colors.primary : Colors.outline}
+                      />
+                      <Text style={[styles.permLabel, active && styles.alarmLabelActive]}>
+                        {item.label}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.previewBtn}
+                      onPress={() => handleAlarmPreview(item.file as number)}
+                      activeOpacity={0.7}
+                    >
+                      <MaterialCommunityIcons name="play-circle-outline" size={16} color={Colors.primary} />
+                      <Text style={styles.previewBtnText}>Preview</Text>
+                    </TouchableOpacity>
+                  </View>
+                </React.Fragment>
+              );
+            })}
+          </View>
+        </View>
 
         {/* White noise sound */}
         <View style={styles.section}>
@@ -306,4 +379,17 @@ const styles = StyleSheet.create({
   maxBadgeText: { fontSize: 9, fontWeight: '700', color: Colors.on_secondary_container },
   appInfo: { alignItems: 'center', gap: 6, paddingTop: 8 },
   appInfoText: { fontSize: 12, color: Colors.on_surface_variant, opacity: 0.4 },
+
+  alarmRow: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 16, paddingVertical: 14,
+  },
+  alarmLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
+  alarmLabelActive: { color: Colors.primary, fontWeight: '700' },
+  previewBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8,
+    backgroundColor: 'rgba(168,164,255,0.1)',
+  },
+  previewBtnText: { fontSize: 11, fontWeight: '600', color: Colors.primary },
 });

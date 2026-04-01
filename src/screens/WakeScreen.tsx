@@ -1,48 +1,89 @@
-import React, { useState, useEffect, useCallback } from 'react';
+/**
+ * WakeScreen
+ *
+ * Tasks wired here: P.7 / P.8 / 3.8 / 3.15 / 3.16 / 4.9 / 5.6b / P.12
+ *
+ * Alarm:  expo-av audio + Vibration on mount; volume ramps 0.1→1.0 over
+ *         ALARM_RAMP_SECONDS using setInterval.
+ * Snooze: in-screen countdown (no navigation back to Monitoring); restarts
+ *         alarm when countdown reaches zero.
+ */
+
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  SafeAreaView,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Audio } from 'expo-av';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Colors } from '../constants';
 import { RootStackParamList } from '../navigation/AppNavigator';
-import { SNOOZE_MINUTES } from '../constants/config';
-import { alarmService } from '../services/AlarmService';
+import { SNOOZE_MINUTES, ALARM_RAMP_SECONDS, ALARM_SOUNDS } from '../constants/config';
+import { getAlarmSound } from '../services/SettingsService';
 import { sessionService } from '../services/SessionService';
 import { buildSessionSummary, useInsufficientSuggestion } from '../hooks/useSessionSummary';
 import { useTier } from '../hooks/useTier';
 import { NapSession, WakeRating, PlacementEvaluation } from '../models/Session';
 import type { DetectionMethod } from '../models/Session';
 
-type Nav = NativeStackNavigationProp<RootStackParamList>;
+type Nav   = NativeStackNavigationProp<RootStackParamList>;
 type Route = RouteProp<RootStackParamList, 'Wake'>;
+
+// ── Haptics shim (no static import — native module guard) ─────────────────────
+let Haptics: any;
+if (!__DEV__) {
+  Haptics = require('expo-haptics');
+} else {
+  Haptics = {
+    notificationAsync: async () => {},
+    impactAsync:       async () => {},
+    NotificationFeedbackType: { Success: 'success' },
+    ImpactFeedbackStyle:      { Heavy: 'heavy' },
+  };
+}
 
 const METHOD_LABEL: Record<DetectionMethod, string> = {
   accelerometer: 'Accelerometer',
-  mic: 'Microphone',
-  combo: 'Accel + Mic',
-  manual_tap: 'Manual tap',
+  mic:           'Microphone',
+  combo:         'Accel + Mic',
+  manual_tap:    'Manual tap',
 };
 
 export default function WakeScreen() {
   const navigation = useNavigation<Nav>();
-  const route = useRoute<Route>();
+  const route      = useRoute<Route>();
   const { sessionId } = route.params;
 
-  const [session, setSession] = useState<NapSession | null>(null);
-  const [rating, setRating] = useState<WakeRating>(4);
-  const [saved, setSaved] = useState(false);
+  // ── Session / rating state ────────────────────────────────────────────────
+  const [session,        setSession]        = useState<NapSession | null>(null);
+  const [rating,         setRating]         = useState<WakeRating>(4);
+  const [saved,          setSaved]          = useState(false);
 
   // P.12 -- placement evaluation state
   const [evalComfortable, setEvalComfortable] = useState<boolean | null>(null);
-  const [evalAccuracy, setEvalAccuracy] = useState<PlacementEvaluation['accuracyPerceived'] | null>(null);
-  const [evalSubmitted, setEvalSubmitted] = useState(false);
+  const [evalAccuracy,    setEvalAccuracy]    = useState<PlacementEvaluation['accuracyPerceived'] | null>(null);
+  const [evalSubmitted,   setEvalSubmitted]   = useState(false);
+
+  // ── Alarm refs ────────────────────────────────────────────────────────────
+  const soundRef        = useRef<Audio.Sound | null>(null);
+  const rampRef         = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mountedRef      = useRef(true);
+  const vibrateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Current time display (HH:mm, ticks every second) ─────────────────────
+  const [currentTime, setCurrentTime] = useState(() => {
+    const n = new Date();
+    return `${String(n.getHours()).padStart(2, '0')}:${String(n.getMinutes()).padStart(2, '0')}`;
+  });
+
+  // ── Snooze countdown (null = not snoozing) ────────────────────────────────
+  const [snoozeSecondsLeft, setSnoozeSecondsLeft] = useState<number | null>(null);
 
   // 4.9 — Shorter-target suggestion
   const { shouldSuggestShorterTarget, suggestedTargetMinutes } = useInsufficientSuggestion();
@@ -50,18 +91,104 @@ export default function WakeScreen() {
   // 5.6b — Tier limits for full report gating
   const { limits } = useTier();
 
-  // 3.8 — Load the session by ID on mount
+  // ── Alarm helpers ─────────────────────────────────────────────────────────
+
+  const stopAlarm = useCallback(() => {
+    if (vibrateTimerRef.current) { clearTimeout(vibrateTimerRef.current); vibrateTimerRef.current = null; }
+    if (rampRef.current) { clearInterval(rampRef.current); rampRef.current = null; }
+    const s = soundRef.current;
+    soundRef.current = null;
+    if (s) {
+      s.stopAsync().catch(() => {});
+      s.unloadAsync().catch(() => {});
+    }
+  }, []);
+
+  const startAlarm = useCallback(async () => {
+    stopAlarm(); // clean slate before (re-)starting
+    try {
+      await Audio.setAudioModeAsync({
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: true,
+      });
+      const soundId   = await getAlarmSound();
+      const soundEntry = ALARM_SOUNDS.find((s) => s.id === soundId) ?? ALARM_SOUNDS[0];
+      const { sound } = await Audio.Sound.createAsync(
+        soundEntry.file,
+        { isLooping: true, volume: 0.1 },
+      );
+      if (!mountedRef.current) { await sound.unloadAsync(); return; }
+      soundRef.current = sound;
+      await sound.playAsync();
+      let elapsed = 0;
+      rampRef.current = setInterval(() => {
+        if (!mountedRef.current) { clearInterval(rampRef.current!); rampRef.current = null; return; }
+        elapsed++;
+        const vol = Math.min(1.0, 0.1 + (0.9 * elapsed / ALARM_RAMP_SECONDS));
+        soundRef.current?.setVolumeAsync(vol).catch(() => {});
+        if (elapsed >= ALARM_RAMP_SECONDS) { clearInterval(rampRef.current!); rampRef.current = null; }
+      }, 1_000);
+    } catch {
+      // Audio unavailable (e.g. Expo Go without native build) — vibrate only
+    }
+    const vibrateLoop = () => {
+      if (!mountedRef.current) return;
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      vibrateTimerRef.current = setTimeout(vibrateLoop, 1000);
+    };
+    vibrateLoop();
+  }, [stopAlarm]);
+
+  // ── Mount: start alarm; unmount: stop everything ──────────────────────────
+  useEffect(() => {
+    mountedRef.current = true;
+    startAlarm();
+    return () => {
+      mountedRef.current = false;
+      stopAlarm();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Current time ticker ───────────────────────────────────────────────────
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (!mountedRef.current) return;
+      const n = new Date();
+      setCurrentTime(`${String(n.getHours()).padStart(2, '0')}:${String(n.getMinutes()).padStart(2, '0')}`);
+    }, 1_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // ── Snooze countdown tick (uses recursive setTimeout for clean cancellation)
+  useEffect(() => {
+    if (snoozeSecondsLeft === null) return;
+    if (snoozeSecondsLeft <= 0) {
+      // Countdown over — restart alarm and restore buttons
+      setSnoozeSecondsLeft(null);
+      startAlarm();
+      return;
+    }
+    const id = setTimeout(() => {
+      if (mountedRef.current) setSnoozeSecondsLeft((s) => (s !== null ? s - 1 : null));
+    }, 1_000);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snoozeSecondsLeft]);
+
+  // ── 3.8 — Load session by ID on mount ────────────────────────────────────
   useEffect(() => {
     async function load() {
-      const all = await sessionService.loadAll();
+      const all   = await sessionService.loadAll();
       const found = all.find((s) => s.session_id === sessionId) ?? null;
+      if (!mountedRef.current) return;
       setSession(found);
       if (found?.wake_rating) setRating(found.wake_rating);
     }
     load();
   }, [sessionId]);
 
-  // 3.8 / 3.15 / 3.16 — Build summary (works with null session gracefully)
+  // ── 3.8 / 3.15 / 3.16 — Build summary ───────────────────────────────────
   const summary = session
     ? buildSessionSummary(
         session.target_minutes,
@@ -71,12 +198,12 @@ export default function WakeScreen() {
       )
     : null;
 
-  // Save rating and navigate home
+  // ── Save rating + navigate home ───────────────────────────────────────────
   const handleDone = useCallback(async () => {
+    stopAlarm();
     if (session && !saved) {
       setSaved(true);
       const updated: NapSession = { ...session, wake_rating: rating };
-      // Overwrite the session with the rating
       const all = await sessionService.loadAll();
       const idx = all.findIndex((s) => s.session_id === sessionId);
       if (idx >= 0) {
@@ -84,7 +211,6 @@ export default function WakeScreen() {
         const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
         await AsyncStorage.setItem('@smart_nap_timer:sessions', JSON.stringify(all));
       }
-      // P.12 -- save placement evaluation if user answered
       if (evalComfortable !== null && evalAccuracy !== null && !evalSubmitted) {
         setEvalSubmitted(true);
         const evaluation: PlacementEvaluation = {
@@ -95,27 +221,32 @@ export default function WakeScreen() {
       }
     }
     navigation.navigate('Main');
-  }, [session, saved, rating, sessionId, navigation, evalComfortable, evalAccuracy, evalSubmitted]);
+  }, [session, saved, rating, sessionId, navigation, evalComfortable, evalAccuracy, evalSubmitted, stopAlarm]);
 
-  // 2.25 — Snooze (reuse the same placement from the completed session)
-  async function handleSnooze() {
-    await alarmService.scheduleSnooze().catch(() => {});
-    const snoozePlacements = session?.placements ?? [session?.placement ?? 'mattress'];
-    navigation.replace('Monitoring', {
-      targetMinutes: SNOOZE_MINUTES,
-      placement:  snoozePlacements[0],
-      placements: snoozePlacements,
-    });
+  // ── Snooze actions ────────────────────────────────────────────────────────
+  function handleSnooze() {
+    stopAlarm();
+    setSnoozeSecondsLeft(SNOOZE_MINUTES * 60);
   }
 
-  const target = summary?.targetMinutes ?? 0;
-  const actual = summary?.actualMinutes ?? 0;
-  const latency = summary?.latencyMinutes ?? 0;
-  const method = session?.detection_method ?? 'combo';
+  function handleCancelSnooze() {
+    setSnoozeSecondsLeft(null);
+    navigation.navigate('Main');
+  }
+
+  // ── Derived display values ────────────────────────────────────────────────
+  const target     = summary?.targetMinutes ?? 0;
+  const actual     = summary?.actualMinutes ?? 0;
+  const latency    = summary?.latencyMinutes ?? 0;
+  const method     = session?.detection_method ?? 'combo';
   const qualityPct = Math.round(((rating / 5) * 0.6 + (actual / (target || 1)) * 0.4) * 100);
 
+  const snoozeMins = snoozeSecondsLeft !== null ? Math.floor(snoozeSecondsLeft / 60) : 0;
+  const snoozeSecs = snoozeSecondsLeft !== null ? snoozeSecondsLeft % 60 : 0;
+  const snoozeStr  = `${String(snoozeMins).padStart(2, '0')}:${String(snoozeSecs).padStart(2, '0')}`;
+
   return (
-    <SafeAreaView style={styles.root}>
+    <SafeAreaView style={styles.root} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Restored</Text>
@@ -127,7 +258,8 @@ export default function WakeScreen() {
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
         {/* Hero */}
         <View style={styles.hero}>
-          <Text style={styles.heroTitle}>Good morning!</Text>
+          <Text style={styles.heroTitle}>Time to Wake Up</Text>
+          <Text style={styles.heroTime}>{currentTime}</Text>
           <Text style={styles.heroSub}>How do you feel?</Text>
         </View>
 
@@ -236,16 +368,12 @@ export default function WakeScreen() {
               <Text style={styles.evalTitle}>How was your placement?</Text>
             </View>
 
-            {/* Comfort row */}
             <Text style={styles.evalQuestion}>Was it comfortable?</Text>
             <View style={styles.evalRow}>
               {([true, false] as const).map((val) => (
                 <TouchableOpacity
                   key={String(val)}
-                  style={[
-                    styles.evalChip,
-                    evalComfortable === val && styles.evalChipActive,
-                  ]}
+                  style={[styles.evalChip, evalComfortable === val && styles.evalChipActive]}
                   onPress={() => setEvalComfortable(val)}
                   activeOpacity={0.8}
                 >
@@ -256,21 +384,17 @@ export default function WakeScreen() {
               ))}
             </View>
 
-            {/* Accuracy row */}
             <Text style={styles.evalQuestion}>Did it detect sleep accurately?</Text>
             <View style={styles.evalRow}>
               {(['good', 'late', 'too_early', 'unknown'] as const).map((val) => (
                 <TouchableOpacity
                   key={val}
-                  style={[
-                    styles.evalChip,
-                    evalAccuracy === val && styles.evalChipActive,
-                  ]}
+                  style={[styles.evalChip, evalAccuracy === val && styles.evalChipActive]}
                   onPress={() => setEvalAccuracy(val)}
                   activeOpacity={0.8}
                 >
                   <Text style={[styles.evalChipText, evalAccuracy === val && styles.evalChipTextActive]}>
-                    {val === 'good' ? 'Yes' : val === 'late' ? 'Too late' : val === 'too_early' ? 'Too early' : "Not sure"}
+                    {val === 'good' ? 'Yes' : val === 'late' ? 'Too late' : val === 'too_early' ? 'Too early' : 'Not sure'}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -287,40 +411,54 @@ export default function WakeScreen() {
         </View>
       </ScrollView>
 
-      {/* Footer */}
+      {/* Footer — snooze countdown OR action buttons */}
       <View style={styles.footer}>
-        <TouchableOpacity style={styles.doneBtn} onPress={handleDone} activeOpacity={0.85}>
-          <Text style={styles.doneBtnText}>Done</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.snoozeBtn} onPress={handleSnooze} activeOpacity={0.85}>
-          <Text style={styles.snoozeBtnText}>Snooze {SNOOZE_MINUTES} min</Text>
-        </TouchableOpacity>
+        {snoozeSecondsLeft !== null ? (
+          <>
+            <Text style={styles.snoozeCountdownText}>Snooze: {snoozeStr}</Text>
+            <TouchableOpacity style={styles.cancelSnoozeBtn} onPress={handleCancelSnooze} activeOpacity={0.85}>
+              <Text style={styles.cancelSnoozeBtnText}>Cancel Snooze</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <>
+            <TouchableOpacity style={styles.doneBtn} onPress={handleDone} activeOpacity={0.85}>
+              <Text style={styles.doneBtnText}>Dismiss</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.snoozeBtn} onPress={handleSnooze} activeOpacity={0.85}>
+              <Text style={styles.snoozeBtnText}>Snooze {SNOOZE_MINUTES} min</Text>
+            </TouchableOpacity>
+          </>
+        )}
       </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: Colors.background },
+  root:   { flex: 1, backgroundColor: Colors.bg_base },
   scroll: { paddingHorizontal: 24, paddingBottom: 160 },
+
   header: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: 24, paddingVertical: 16, backgroundColor: Colors.background,
+    paddingHorizontal: 24, paddingVertical: 16, backgroundColor: Colors.bg_base,
   },
   headerTitle: { fontSize: 17, fontWeight: '700', color: Colors.on_surface, letterSpacing: -0.3 },
-  hero: { gap: 4, paddingTop: 8, paddingBottom: 16 },
-  heroTitle: { fontSize: 52, fontWeight: '800', color: Colors.on_surface, lineHeight: 56, letterSpacing: -1 },
-  heroSub: { fontSize: 14, fontWeight: '500', color: Colors.on_surface_variant },
+  headerTime:  { fontSize: 12, color: Colors.on_surface_variant, marginTop: 1 },
+
+  hero:      { gap: 8, paddingTop: 8, paddingBottom: 16 },
+  heroTitle: { fontSize: 32, fontWeight: '800', color: Colors.text_primary, letterSpacing: -0.5 },
+  heroTime:  { fontSize: 64, fontWeight: '200', color: Colors.text_primary, letterSpacing: -2, lineHeight: 72 },
+  heroSub:   { fontSize: 14, fontWeight: '500', color: Colors.on_surface_variant },
+
   ratingRow: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     paddingVertical: 8, marginBottom: 8,
   },
-  stars: { flexDirection: 'row', gap: 8 },
-  starGlow: {
-    shadowColor: Colors.primary, shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5, shadowRadius: 6,
-  },
+  stars:       { flexDirection: 'row', gap: 8 },
+  starGlow:    { shadowColor: Colors.primary, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.5, shadowRadius: 6 },
   ratingValue: { fontSize: 14, fontWeight: '700', color: Colors.primary, letterSpacing: 2 },
+
   summaryCard: {
     backgroundColor: Colors.surface_container, borderRadius: 12,
     padding: 24, gap: 24, position: 'relative', overflow: 'hidden', marginBottom: 16,
@@ -330,82 +468,64 @@ const styles = StyleSheet.create({
     width: 128, height: 128, borderRadius: 64,
     backgroundColor: 'rgba(168,164,255,0.1)',
   },
-  summaryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 24 },
-  summaryItem: { width: '45%', gap: 4 },
-  summaryItemLabel: {
-    fontSize: 10, textTransform: 'uppercase', letterSpacing: 1.2,
-    color: Colors.on_surface_variant, fontWeight: '700',
-  },
-  summaryItemValue: { fontSize: 20, fontWeight: '700', color: Colors.on_surface },
-  summaryItemValueSm: { fontSize: 13, fontWeight: '600', color: Colors.on_surface },
-  detectedRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  summaryGrid:       { flexDirection: 'row', flexWrap: 'wrap', gap: 24 },
+  summaryItem:       { width: '45%', gap: 4 },
+  summaryItemLabel:  { fontSize: 10, textTransform: 'uppercase', letterSpacing: 1.2, color: Colors.on_surface_variant, fontWeight: '700' },
+  summaryItemValue:  { fontSize: 20, fontWeight: '700', color: Colors.on_surface },
+  summaryItemValueSm:{ fontSize: 13, fontWeight: '600', color: Colors.on_surface },
+  detectedRow:       { flexDirection: 'row', alignItems: 'center', gap: 4 },
+
   warningCard: {
     backgroundColor: 'rgba(167,1,56,0.2)', borderRadius: 12, padding: 20,
     flexDirection: 'row', alignItems: 'flex-start', gap: 16, marginBottom: 16,
   },
   warningIconBox: { backgroundColor: Colors.error_container, padding: 8, borderRadius: 8 },
-  warningText: { flex: 1, gap: 6 },
-  warningTitle: { fontSize: 13, fontWeight: '700', color: Colors.on_error_container },
-  warningBody: { fontSize: 11, color: Colors.on_surface_variant, lineHeight: 16 },
-  warnProgress: {
-    height: 4, backgroundColor: Colors.surface_container_high,
-    borderRadius: 2, overflow: 'hidden',
-  },
+  warningText:    { flex: 1, gap: 6 },
+  warningTitle:   { fontSize: 13, fontWeight: '700', color: Colors.on_error_container },
+  warningBody:    { fontSize: 11, color: Colors.on_surface_variant, lineHeight: 16 },
+  warnProgress:   { height: 4, backgroundColor: Colors.surface_container_high, borderRadius: 2, overflow: 'hidden' },
   warnProgressFill: { height: '100%', backgroundColor: '#f97316', borderRadius: 2 },
-  warnReasons: { fontSize: 10, color: Colors.on_surface_variant, fontStyle: 'italic' },
+  warnReasons:    { fontSize: 10, color: Colors.on_surface_variant, fontStyle: 'italic' },
+
   suggestionCard: {
     backgroundColor: 'rgba(168,164,255,0.12)', borderRadius: 12, padding: 20,
     flexDirection: 'row', alignItems: 'flex-start', gap: 16, marginBottom: 16,
     borderWidth: 1, borderColor: 'rgba(168,164,255,0.25)',
   },
   suggestionIconBox: { backgroundColor: 'rgba(168,164,255,0.15)', padding: 8, borderRadius: 8 },
-  suggestionText: { flex: 1, gap: 6 },
-  suggestionTitle: { fontSize: 13, fontWeight: '700', color: Colors.primary },
-  suggestionBody: { fontSize: 11, color: Colors.on_surface_variant, lineHeight: 16 },
-  qualityCard: {
-    height: 128, borderRadius: 12, overflow: 'hidden',
-    backgroundColor: Colors.surface_container_high,
-  },
+  suggestionText:    { flex: 1, gap: 6 },
+  suggestionTitle:   { fontSize: 13, fontWeight: '700', color: Colors.primary },
+  suggestionBody:    { fontSize: 11, color: Colors.on_surface_variant, lineHeight: 16 },
+
+  qualityCard:   { height: 128, borderRadius: 12, overflow: 'hidden', backgroundColor: Colors.surface_container_high },
   qualityCenter: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 4 },
-  qualityLabel: {
-    fontSize: 10, fontWeight: '700', letterSpacing: 3,
-    color: Colors.on_surface_variant, textTransform: 'uppercase',
-  },
-  qualityValue: { fontSize: 28, fontWeight: '800', color: Colors.on_surface },
+  qualityLabel:  { fontSize: 10, fontWeight: '700', letterSpacing: 3, color: Colors.on_surface_variant, textTransform: 'uppercase' },
+  qualityValue:  { fontSize: 28, fontWeight: '800', color: Colors.on_surface },
+
   footer: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
     padding: 24, backgroundColor: 'rgba(14,14,19,0.85)', gap: 12,
   },
-  doneBtn: {
-    paddingVertical: 18, borderRadius: 99, alignItems: 'center',
-    backgroundColor: Colors.primary_dim,
-  },
+  doneBtn:     { paddingVertical: 18, borderRadius: 99, alignItems: 'center', backgroundColor: Colors.primary },
   doneBtnText: { color: Colors.on_primary, fontSize: 17, fontWeight: '700' },
-  snoozeBtn: {
-    paddingVertical: 18, borderRadius: 99, alignItems: 'center',
-    borderWidth: 1, borderColor: Colors.outline_variant,
+  snoozeBtn:   { paddingVertical: 18, borderRadius: 99, alignItems: 'center', backgroundColor: Colors.bg_elevated },
+  snoozeBtnText: { color: Colors.text_secondary, fontSize: 15, fontWeight: '600' },
+
+  snoozeCountdownText: {
+    fontSize: 32, fontWeight: '800', color: Colors.primary,
+    textAlign: 'center', letterSpacing: -1,
   },
-  snoozeBtnText: { color: Colors.on_surface, fontSize: 15, fontWeight: '600' },
+  cancelSnoozeBtn:     { paddingVertical: 18, borderRadius: 99, alignItems: 'center', borderWidth: 1, borderColor: Colors.outline_variant },
+  cancelSnoozeBtnText: { color: Colors.on_surface, fontSize: 15, fontWeight: '600' },
 
   // P.12 -- Placement evaluation card
-  evalCard: {
-    backgroundColor: Colors.surface_container, borderRadius: 12,
-    padding: 20, marginBottom: 16, gap: 10,
-    borderWidth: 1, borderColor: 'rgba(168,164,255,0.15)',
-  },
-  evalHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
-  evalTitle: { fontSize: 13, fontWeight: '700', color: Colors.on_surface },
-  evalQuestion: { fontSize: 11, color: Colors.on_surface_variant, textTransform: 'uppercase', letterSpacing: 1, marginTop: 4 },
-  evalRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  evalChip: {
-    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
-    backgroundColor: Colors.surface_container_high,
-    borderWidth: 1, borderColor: 'transparent',
-  },
-  evalChipActive: {
-    borderColor: Colors.primary,
-    backgroundColor: 'rgba(168,164,255,0.12)',
-  },
-  evalChipText: { fontSize: 12, fontWeight: '500', color: Colors.on_surface_variant },
-  evalChipTextActive: { color: Colors.primary, fontWeight: '700' },
+  evalCard:          { backgroundColor: Colors.surface_container, borderRadius: 12, padding: 20, marginBottom: 16, gap: 10, borderWidth: 1, borderColor: 'rgba(168,164,255,0.15)' },
+  evalHeader:        { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
+  evalTitle:         { fontSize: 13, fontWeight: '700', color: Colors.on_surface },
+  evalQuestion:      { fontSize: 11, color: Colors.on_surface_variant, textTransform: 'uppercase', letterSpacing: 1, marginTop: 4 },
+  evalRow:           { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  evalChip:          { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, backgroundColor: Colors.surface_container_high, borderWidth: 1, borderColor: 'transparent' },
+  evalChipActive:    { borderColor: Colors.primary, backgroundColor: 'rgba(168,164,255,0.12)' },
+  evalChipText:      { fontSize: 12, fontWeight: '500', color: Colors.on_surface_variant },
+  evalChipTextActive:{ color: Colors.primary, fontWeight: '700' },
 });

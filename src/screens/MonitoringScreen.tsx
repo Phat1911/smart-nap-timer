@@ -10,14 +10,17 @@
  *   P.11 — NotificationBlocker: block on mount, unblock on unmount / cancel
  */
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
+  Modal,
+  Platform,
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  SafeAreaView,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp }          from '@react-navigation/native-stack';
@@ -27,6 +30,22 @@ import { useSleepDetection }                  from '../hooks/useSleepDetection';
 import { usePermissions }                     from '../hooks/usePermissions';
 import { PermissionDeniedCard }               from '../components/ui/PermissionDeniedCard';
 import { notificationBlocker }                from '../services/NotificationBlocker';
+import DndService                             from '../services/DndService';
+
+const DND_PERMISSION_ASKED_KEY = '@smart_nap_timer:dnd_permission_asked';
+
+// ── Haptics shim (no static import — native module guard) ─────────────────────
+let Haptics: any;
+if (!__DEV__) {
+  Haptics = require('expo-haptics');
+} else {
+  Haptics = {
+    notificationAsync: async () => {},
+    impactAsync:       async () => {},
+    NotificationFeedbackType: { Success: 'success' },
+    ImpactFeedbackStyle:      { Heavy: 'heavy' },
+  };
+}
 
 type Nav   = NativeStackNavigationProp<RootStackParamList>;
 type Route = RouteProp<RootStackParamList, 'Monitoring'>;
@@ -51,9 +70,26 @@ export default function MonitoringScreen() {
   // P.4 — pass placement so ConfidenceEngine uses the correct profile weights
   const { state, onManualTap } = useSleepDetection(targetMinutes, placement, placements);
 
+  // ── DND permission modal (one-time, Android only) ────────────────────────
+  const [showDndModal, setShowDndModal] = useState(false);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    (async () => {
+      const alreadyAsked = await AsyncStorage.getItem(DND_PERMISSION_ASKED_KEY).catch(() => null);
+      if (alreadyAsked) return;
+      const granted = await DndService.isPermissionGranted();
+      if (!granted) {
+        setShowDndModal(true);
+        await AsyncStorage.setItem(DND_PERMISSION_ASKED_KEY, 'true').catch(() => {});
+      }
+    })();
+  }, []);
+
   // ── Navigate to Sleeping when sleep is detected (task 2.10) ──────────────
   useEffect(() => {
     if (state.isDetected) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       navigation.replace('Sleeping', {
         targetMinutes,
         sleepStartTime: Date.now(),
@@ -66,11 +102,28 @@ export default function MonitoringScreen() {
     }
   }, [state.isDetected]);
 
-  // ── P.11 — Block notifications on mount, restore on unmount ─────────────────
+  // ── Auto-stop: navigate when targetMinutes elapsed without detection ─────────
+  useEffect(() => {
+    if (state.elapsedSeconds >= targetMinutes * 60 && !state.isDetected) {
+      navigation.replace('Sleeping', {
+        targetMinutes,
+        sleepStartTime: Date.now(),
+        placement,
+        placements,
+        latencySeconds:  state.elapsedSeconds,
+        detectionMethod: 'manual_tap',
+        confidenceScore: state.confidence,
+      });
+    }
+  }, [state.elapsedSeconds]);
+
+  // ── P.11 — Block foreground notifications + system DND on mount ─────────────
   useEffect(() => {
     notificationBlocker.block().catch(() => {});
+    DndService.enable().catch(() => {});
     return () => {
       notificationBlocker.unblock().catch(() => {});
+      DndService.disable().catch(() => {});
     };
   }, []);
 
@@ -96,7 +149,7 @@ export default function MonitoringScreen() {
 
   if (showPermissionWall) {
     return (
-      <SafeAreaView style={styles.root}>
+      <SafeAreaView style={styles.root} edges={['top']}>
         <View style={styles.header}>
           <MaterialCommunityIcons name="star-four-points" size={22} color={Colors.primary} />
           <Text style={styles.headerTitle}>Permissions required</Text>
@@ -115,7 +168,45 @@ export default function MonitoringScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.root}>
+    <SafeAreaView style={styles.root} edges={['top']}>
+      {/* DND permission modal — shown once when permission hasn't been granted */}
+      <Modal
+        visible={showDndModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowDndModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Enable Do Not Disturb</Text>
+            <Text style={styles.modalBody}>
+              Smart Nap Timer can silence all interruptions during your nap for a
+              deeper sleep experience. Grant Do Not Disturb access in Settings to
+              activate this feature.
+            </Text>
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                onPress={() => setShowDndModal(false)}
+                style={styles.modalBtnSecondary}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.modalBtnSecondaryText}>Not now</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={async () => {
+                  setShowDndModal(false);
+                  await DndService.requestPermission();
+                }}
+                style={styles.modalBtnPrimary}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.modalBtnPrimaryText}>Grant access</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
@@ -322,5 +413,35 @@ const styles = StyleSheet.create({
   cancelText: {
     color: Colors.on_surface_variant, fontSize: 12,
     fontWeight: '700', textTransform: 'uppercase', letterSpacing: 2,
+  },
+
+  // DND permission modal
+  modalOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24,
+  },
+  modalCard: {
+    width: '100%', backgroundColor: Colors.surface_container,
+    borderRadius: 20, padding: 24, gap: 16,
+  },
+  modalTitle: {
+    fontSize: 17, fontWeight: '700', color: Colors.on_surface,
+  },
+  modalBody: {
+    fontSize: 14, lineHeight: 22, color: Colors.on_surface_variant,
+  },
+  modalActions: {
+    flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 4,
+  },
+  modalBtnSecondary: { paddingVertical: 10, paddingHorizontal: 16 },
+  modalBtnSecondaryText: {
+    fontSize: 14, fontWeight: '600', color: Colors.on_surface_variant,
+  },
+  modalBtnPrimary: {
+    paddingVertical: 10, paddingHorizontal: 20,
+    backgroundColor: Colors.primary, borderRadius: 10,
+  },
+  modalBtnPrimaryText: {
+    fontSize: 14, fontWeight: '700', color: '#fff',
   },
 });

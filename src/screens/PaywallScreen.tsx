@@ -27,6 +27,7 @@ const FREE_FEATURES = [
   '2 naps per day',
   '7-session history',
   '1 sound (Rain)',
+  '1 phone placement',
   'Science-based suggestions',
 ];
 
@@ -34,6 +35,7 @@ const PRO_FEATURES = [
   '5 naps per day',
   '30-session history',
   '4 sounds (Rain, Fan, Static...)',
+  '2 phone placements (combo fusion)',
   'AI predictions active',
   'Full insufficient sleep report',
 ];
@@ -42,6 +44,7 @@ const MAX_FEATURES = [
   'Unlimited naps',
   'Full history tracking',
   'All sounds & ambient library',
+  '4 phone placements (quad fusion)',
   'AI + confidence % analysis',
   'Session data export (JSON/CSV)',
 ];

@@ -54,6 +54,17 @@ export const SNOOZE_MINUTES = 10;
 // Alarm ramp duration
 export const ALARM_RAMP_SECONDS = 30;
 
+// Bundled alarm sounds
+export const ALARM_SOUNDS = [
+  { id: 'alarm',         label: 'Classic', file: require('../../assets/sounds/alarm.wav') },
+  { id: 'alarm_bell',    label: 'Bell',    file: require('../../assets/sounds/alarm_bell.wav') },
+  { id: 'alarm_gentle',  label: 'Gentle',  file: require('../../assets/sounds/alarm_gentle.wav') },
+  { id: 'alarm_digital', label: 'Digital', file: require('../../assets/sounds/alarm_digital.wav') },
+] as const;
+
+export type AlarmSoundId = typeof ALARM_SOUNDS[number]['id'];
+export const DEFAULT_ALARM_SOUND: AlarmSoundId = 'alarm';
+
 // ── P.2  Placement profiles ───────────────────────────────────────────────────
 
 export interface PlacementProfile {

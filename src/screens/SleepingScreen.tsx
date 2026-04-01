@@ -14,6 +14,7 @@ import {
   PanResponder,
   LayoutChangeEvent,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons }             from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp }          from '@react-navigation/native-stack';
@@ -148,7 +149,7 @@ export default function SleepingScreen() {
   const timeStr = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 
   return (
-    <View style={styles.root}>
+    <SafeAreaView style={styles.root} edges={['top']}>
       {/* Subtle top glow */}
       <View style={styles.topGlow} pointerEvents="none" />
 
@@ -205,7 +206,7 @@ export default function SleepingScreen() {
           />
         </View>
       </View>
-    </View>
+    </SafeAreaView>
   );
 }
 

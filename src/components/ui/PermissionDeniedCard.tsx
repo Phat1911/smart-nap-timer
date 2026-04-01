@@ -17,6 +17,7 @@ import {
   Linking,
   Platform,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../../constants';
 
@@ -36,6 +37,8 @@ export function PermissionDeniedCard({
   notifDenied,
   onContinueWithoutMic,
 }: PermissionDeniedCardProps) {
+  const insets = useSafeAreaInsets();
+
   function openSettings() {
     if (Platform.OS === 'ios') {
       Linking.openURL('app-settings:');
@@ -45,7 +48,7 @@ export function PermissionDeniedCard({
   }
 
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, { marginTop: insets.top + 24 }]}>
       {/* Icon */}
       <View style={styles.iconBox}>
         <MaterialCommunityIcons name="lock-outline" size={28} color={Colors.error} />
