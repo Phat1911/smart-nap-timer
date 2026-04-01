@@ -17,6 +17,11 @@ export interface TierLimits {
   confidenceEnabled: boolean;
   /** Whether the full insufficient-sleep report is shown */
   fullReportEnabled: boolean;
+  /**
+   * Max number of phone placements the user can combine per nap.
+   * Free=1 (single), Pro=2 (dual fusion), Max=4 (quad fusion)
+   */
+  maxPlacements: number;
 }
 
 /** Feature limits for each tier */
@@ -29,6 +34,7 @@ export const TIER_LIMITS: Record<TierName, TierLimits> = {
     exportEnabled:      false,
     confidenceEnabled:  false,
     fullReportEnabled:  false,
+    maxPlacements:      1,
   },
   pro: {
     dailyNapLimit:      5,
@@ -38,6 +44,7 @@ export const TIER_LIMITS: Record<TierName, TierLimits> = {
     exportEnabled:      false,
     confidenceEnabled:  false,
     fullReportEnabled:  true,
+    maxPlacements:      2,
   },
   max: {
     dailyNapLimit:      Infinity,
@@ -47,6 +54,7 @@ export const TIER_LIMITS: Record<TierName, TierLimits> = {
     exportEnabled:      true,
     confidenceEnabled:  true,
     fullReportEnabled:  true,
+    maxPlacements:      4,
   },
 };
 

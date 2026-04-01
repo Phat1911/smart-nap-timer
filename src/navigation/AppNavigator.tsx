@@ -20,11 +20,13 @@ import { Colors } from '../constants';
 export type RootStackParamList = {
   Onboarding: undefined;
   Main: undefined;
-  Monitoring: { targetMinutes: number; placement: PhonePlacement };
+  Monitoring: { targetMinutes: number; placement: PhonePlacement; placements: PhonePlacement[] };
   Sleeping: {
     targetMinutes: number;
     sleepStartTime: number;
     placement: PhonePlacement;
+    /** P.10 -- all active placements passed through for session recording */
+    placements?: PhonePlacement[];
     /** Seconds elapsed in MonitoringScreen before sleep was detected */
     latencySeconds: number;
     detectionMethod: DetectionMethod;

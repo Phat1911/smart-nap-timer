@@ -58,7 +58,7 @@ export default function OnboardingScreen() {
   const listRef = useRef<FlatList>(null);
 
   // 6.1 — Persisted placement selection (set during onboarding slide 2)
-  const { placement, setPlacement } = usePlacement();
+  const { placement, setPlacements } = usePlacement();
 
   async function goNext() {
     if (index < SLIDES.length - 1) {
@@ -67,7 +67,7 @@ export default function OnboardingScreen() {
       setIndex(next);
     } else {
       // 6.1 — Save selected placement before leaving onboarding
-      await setPlacement(placement);
+      await setPlacements([placement]);
       navigation.replace('Main');
     }
   }
@@ -115,7 +115,7 @@ export default function OnboardingScreen() {
                       <TouchableOpacity
                         key={p}
                         style={[styles.placementChip, active && styles.placementChipActive]}
-                        onPress={() => setPlacement(p)}
+                        onPress={() => setPlacements([p])}
                         activeOpacity={0.8}
                       >
                         <MaterialCommunityIcons

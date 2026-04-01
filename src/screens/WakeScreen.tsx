@@ -17,7 +17,7 @@ import { alarmService } from '../services/AlarmService';
 import { sessionService } from '../services/SessionService';
 import { buildSessionSummary, useInsufficientSuggestion } from '../hooks/useSessionSummary';
 import { useTier } from '../hooks/useTier';
-import { NapSession, WakeRating } from '../models/Session';
+import { NapSession, WakeRating, PlacementEvaluation } from '../models/Session';
 import type { DetectionMethod } from '../models/Session';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -38,6 +38,11 @@ export default function WakeScreen() {
   const [session, setSession] = useState<NapSession | null>(null);
   const [rating, setRating] = useState<WakeRating>(4);
   const [saved, setSaved] = useState(false);
+
+  // P.12 -- placement evaluation state
+  const [evalComfortable, setEvalComfortable] = useState<boolean | null>(null);
+  const [evalAccuracy, setEvalAccuracy] = useState<PlacementEvaluation['accuracyPerceived'] | null>(null);
+  const [evalSubmitted, setEvalSubmitted] = useState(false);
 
   // 4.9 — Shorter-target suggestion
   const { shouldSuggestShorterTarget, suggestedTargetMinutes } = useInsufficientSuggestion();
@@ -79,16 +84,27 @@ export default function WakeScreen() {
         const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
         await AsyncStorage.setItem('@smart_nap_timer:sessions', JSON.stringify(all));
       }
+      // P.12 -- save placement evaluation if user answered
+      if (evalComfortable !== null && evalAccuracy !== null && !evalSubmitted) {
+        setEvalSubmitted(true);
+        const evaluation: PlacementEvaluation = {
+          comfortable:       evalComfortable,
+          accuracyPerceived: evalAccuracy,
+        };
+        await sessionService.updatePlacementEvaluation(sessionId, evaluation).catch(() => {});
+      }
     }
     navigation.navigate('Main');
-  }, [session, saved, rating, sessionId, navigation]);
+  }, [session, saved, rating, sessionId, navigation, evalComfortable, evalAccuracy, evalSubmitted]);
 
   // 2.25 — Snooze (reuse the same placement from the completed session)
   async function handleSnooze() {
     await alarmService.scheduleSnooze().catch(() => {});
+    const snoozePlacements = session?.placements ?? [session?.placement ?? 'mattress'];
     navigation.replace('Monitoring', {
       targetMinutes: SNOOZE_MINUTES,
-      placement: session?.placement ?? 'mattress',
+      placement:  snoozePlacements[0],
+      placements: snoozePlacements,
     });
   }
 
@@ -212,6 +228,56 @@ export default function WakeScreen() {
           </View>
         )}
 
+        {/* P.12 -- Placement Evaluation Card */}
+        {session && (
+          <View style={styles.evalCard}>
+            <View style={styles.evalHeader}>
+              <MaterialCommunityIcons name="cellphone-settings" size={18} color={Colors.primary} />
+              <Text style={styles.evalTitle}>How was your placement?</Text>
+            </View>
+
+            {/* Comfort row */}
+            <Text style={styles.evalQuestion}>Was it comfortable?</Text>
+            <View style={styles.evalRow}>
+              {([true, false] as const).map((val) => (
+                <TouchableOpacity
+                  key={String(val)}
+                  style={[
+                    styles.evalChip,
+                    evalComfortable === val && styles.evalChipActive,
+                  ]}
+                  onPress={() => setEvalComfortable(val)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.evalChipText, evalComfortable === val && styles.evalChipTextActive]}>
+                    {val ? 'Yes' : 'No'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Accuracy row */}
+            <Text style={styles.evalQuestion}>Did it detect sleep accurately?</Text>
+            <View style={styles.evalRow}>
+              {(['good', 'late', 'too_early', 'unknown'] as const).map((val) => (
+                <TouchableOpacity
+                  key={val}
+                  style={[
+                    styles.evalChip,
+                    evalAccuracy === val && styles.evalChipActive,
+                  ]}
+                  onPress={() => setEvalAccuracy(val)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.evalChipText, evalAccuracy === val && styles.evalChipTextActive]}>
+                    {val === 'good' ? 'Yes' : val === 'late' ? 'Too late' : val === 'too_early' ? 'Too early' : "Not sure"}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
+
         {/* Quality Score */}
         <View style={styles.qualityCard}>
           <View style={styles.qualityCenter}>
@@ -320,4 +386,26 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: Colors.outline_variant,
   },
   snoozeBtnText: { color: Colors.on_surface, fontSize: 15, fontWeight: '600' },
+
+  // P.12 -- Placement evaluation card
+  evalCard: {
+    backgroundColor: Colors.surface_container, borderRadius: 12,
+    padding: 20, marginBottom: 16, gap: 10,
+    borderWidth: 1, borderColor: 'rgba(168,164,255,0.15)',
+  },
+  evalHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
+  evalTitle: { fontSize: 13, fontWeight: '700', color: Colors.on_surface },
+  evalQuestion: { fontSize: 11, color: Colors.on_surface_variant, textTransform: 'uppercase', letterSpacing: 1, marginTop: 4 },
+  evalRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  evalChip: {
+    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
+    backgroundColor: Colors.surface_container_high,
+    borderWidth: 1, borderColor: 'transparent',
+  },
+  evalChipActive: {
+    borderColor: Colors.primary,
+    backgroundColor: 'rgba(168,164,255,0.12)',
+  },
+  evalChipText: { fontSize: 12, fontWeight: '500', color: Colors.on_surface_variant },
+  evalChipTextActive: { color: Colors.primary, fontWeight: '700' },
 });

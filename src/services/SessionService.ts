@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NapSession, SessionStats, AdaptiveThreshold } from '../models/Session';
+import { placementHabitAnalyzer } from './PlacementHabitAnalyzer';
 import { TIME_OF_DAY, ADAPTIVE, INSUFFICIENT, DETECTION, DEFAULT_PLACEMENT } from '../constants/config';
 import type { TimeOfDay, PhonePlacement } from '../models/Session';
 
@@ -24,10 +25,19 @@ class SessionService {
   // ── Write ─────────────────────────────────────────────────────────────────
 
   async save(session: NapSession): Promise<void> {
+    // Ensure placements array is always populated
+    const normalised: NapSession = {
+      ...session,
+      placements: session.placements?.length > 0
+        ? session.placements
+        : [session.placement],
+    };
     const all = await this.loadAll();
-    all.push(session);
+    all.push(normalised);
     await AsyncStorage.setItem(SESSIONS_KEY, JSON.stringify(all));
-    await this.updateThreshold(session);
+    await this.updateThreshold(normalised);
+    // P.12 -- feed into AI habit analyzer
+    await placementHabitAnalyzer.ingest(normalised).catch(() => {});
   }
 
   // ── Stats ─────────────────────────────────────────────────────────────────
@@ -134,11 +144,30 @@ class SessionService {
 
   // ── Reset / Export ────────────────────────────────────────────────────────
 
+  /**
+   * P.12 -- Attach a placement evaluation to an existing session, then
+   * re-ingest into the habit analyzer so performance data is updated.
+   */
+  async updatePlacementEvaluation(
+    sessionId: string,
+    evaluation: import('../models/Session').PlacementEvaluation,
+  ): Promise<void> {
+    const all = await this.loadAll();
+    const idx = all.findIndex((s) => s.session_id === sessionId);
+    if (idx < 0) return;
+    all[idx] = { ...all[idx], placement_evaluation: evaluation };
+    await AsyncStorage.setItem(SESSIONS_KEY, JSON.stringify(all));
+    // Re-ingest from scratch so each session is counted exactly once
+    await placementHabitAnalyzer.rebuildFromSessions(all).catch(() => {});
+  }
+
   async reset(): Promise<void> {
     const placementKeys: PhonePlacement[] = ['mattress', 'hand', 'chest', 'pocket'];
     await AsyncStorage.multiRemove([
       SESSIONS_KEY,
       AI_WEIGHTS_KEY,
+      '@smart_nap_timer:placement_habits',
+      '@smart_nap_timer:placement_recommendation',
       ...placementKeys.map(thresholdKey),
     ]);
   }

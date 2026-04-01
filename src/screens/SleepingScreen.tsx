@@ -42,6 +42,8 @@ export default function SleepingScreen() {
     detectionMethod,
     confidenceScore,
   } = route.params;
+  // P.10 -- multi-placement array from MonitoringScreen (optional in Sleeping params)
+  const routePlacements: import('../models/Session').PhonePlacement[] | undefined = route.params.placements;
 
   // ── Task 2.21 — dim screen while sleeping ─────────────────────────────────
   useScreenDim();
@@ -87,6 +89,9 @@ export default function SleepingScreen() {
             threshold_T_used:    targetMinutes,
             detection_method:    detectionMethod,
             placement,
+            placements:          routePlacements && routePlacements.length > 0
+                                   ? routePlacements
+                                   : [placement],
             wake_rating:         null,
             is_insufficient:     sessionService.isInsufficient(actualSleepMinutes, targetMinutes),
             confidence_score:    confidenceScore,

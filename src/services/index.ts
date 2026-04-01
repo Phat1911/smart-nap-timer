@@ -19,3 +19,4 @@ export type { TrainingRow, PredictInput } from './LinearRegression';
 export { usageService } from './UsageService';
 
 export { tierService } from './TierService';
+export { placementHabitAnalyzer } from './PlacementHabitAnalyzer';

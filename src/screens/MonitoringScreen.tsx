@@ -7,6 +7,7 @@
  *   2.24 — Detection method label from useSleepDetection
  *   2.16 — PermissionDeniedCard shown when permissions are not granted
  *   2.15 — Manual tap fallback via onManualTap
+ *   P.11 — NotificationBlocker: block on mount, unblock on unmount / cancel
  */
 
 import React, { useEffect } from 'react';
@@ -25,6 +26,7 @@ import { RootStackParamList }                 from '../navigation/AppNavigator';
 import { useSleepDetection }                  from '../hooks/useSleepDetection';
 import { usePermissions }                     from '../hooks/usePermissions';
 import { PermissionDeniedCard }               from '../components/ui/PermissionDeniedCard';
+import { notificationBlocker }                from '../services/NotificationBlocker';
 
 type Nav   = NativeStackNavigationProp<RootStackParamList>;
 type Route = RouteProp<RootStackParamList, 'Monitoring'>;
@@ -40,14 +42,14 @@ const METHOD_LABELS: Record<string, string> = {
 export default function MonitoringScreen() {
   const navigation = useNavigation<Nav>();
   const route      = useRoute<Route>();
-  const { targetMinutes, placement } = route.params;
+  const { targetMinutes, placement, placements } = route.params;
 
   // ── Permissions (tasks 2.11–2.14, 2.16) ──────────────────────────────────
   const permissions = usePermissions();
 
   // ── Sleep detection (tasks 2.10, 2.22–2.24) ──────────────────────────────
   // P.4 — pass placement so ConfidenceEngine uses the correct profile weights
-  const { state, onManualTap } = useSleepDetection(targetMinutes, placement);
+  const { state, onManualTap } = useSleepDetection(targetMinutes, placement, placements);
 
   // ── Navigate to Sleeping when sleep is detected (task 2.10) ──────────────
   useEffect(() => {
@@ -56,12 +58,21 @@ export default function MonitoringScreen() {
         targetMinutes,
         sleepStartTime: Date.now(),
         placement,
+        placements,
         latencySeconds: state.elapsedSeconds,
         detectionMethod: state.detectionMethod,
         confidenceScore: state.confidence,
       });
     }
   }, [state.isDetected]);
+
+  // ── P.11 — Block notifications on mount, restore on unmount ─────────────────
+  useEffect(() => {
+    notificationBlocker.block().catch(() => {});
+    return () => {
+      notificationBlocker.unblock().catch(() => {});
+    };
+  }, []);
 
   // ── Formatted elapsed time (task 2.23) ───────────────────────────────────
   const elapsedMins = Math.floor(state.elapsedSeconds / 60);
@@ -72,6 +83,8 @@ export default function MonitoringScreen() {
   const methodLabel    = METHOD_LABELS[state.detectionMethod] ?? 'Accel + Mic'; // task 2.24
 
   function handleCancel() {
+    // P.11 -- unblock is handled by the useEffect cleanup on unmount;
+    // do NOT call it here to avoid a race with the new screen's block().
     navigation.goBack();
   }
 

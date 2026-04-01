@@ -20,6 +20,7 @@ import { micService }                  from '../services/MicService';
 import { confidenceEngine }            from '../services/ConfidenceEngine';
 import { useRollingWindow }            from './useRollingWindow';
 import { DETECTION }                   from '../constants/config';
+import { notificationBlocker }         from '../services/NotificationBlocker';
 import type { DetectionMethod, PhonePlacement } from '../models/Session';
 
 // Evaluate the engine twice per sample interval (every ~1 s)
@@ -44,7 +45,7 @@ export interface SleepDetectionState {
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
-export function useSleepDetection(thresholdMinutes: number, placement?: PhonePlacement) {
+export function useSleepDetection(thresholdMinutes: number, placement?: PhonePlacement, placements?: PhonePlacement[]) {
   const [state, setState] = useState<SleepDetectionState>({
     isDetected:      false,
     confidence:      0,
@@ -69,6 +70,9 @@ export function useSleepDetection(thresholdMinutes: number, placement?: PhonePla
     detectedRef.current  = false;
     consecutiveHighRef.current = 0;
     reset();
+
+    // Block incoming notifications while napping
+    notificationBlocker.block().catch(() => {});
 
     // Start accelerometer + gyroscope
     motionService.start((sample: MotionSample) => {
@@ -97,6 +101,7 @@ export function useSleepDetection(thresholdMinutes: number, placement?: PhonePla
         elapsedSeconds:   elapsed,
         thresholdMinutes,
         placement,
+        placements,
       });
 
       // Sustained trigger (task 2.10): score must be high for N consecutive evals
@@ -135,6 +140,7 @@ export function useSleepDetection(thresholdMinutes: number, placement?: PhonePla
       clearInterval(evalId);
       motionService.stop();
       micService.stop().catch(() => {});
+      notificationBlocker.unblock().catch(() => {});
     };
   // thresholdMinutes is set once from navigation params and won't change
   // eslint-disable-next-line react-hooks/exhaustive-deps

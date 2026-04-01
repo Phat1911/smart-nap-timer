@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,7 @@ import {
   Modal,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Colors } from '../constants';
 import { RootStackParamList } from '../navigation/AppNavigator';
@@ -22,7 +22,8 @@ import { useAIModel } from '../hooks/useAIModel';
 import { usePlacement } from '../hooks/usePlacement';
 import { useTier } from '../hooks/useTier';
 import { useTierGate } from '../hooks/useTierGate';
-import type { PhonePlacement } from '../models/Session';
+import type { PhonePlacement, PlacementRecommendation } from '../models/Session';
+import { placementHabitAnalyzer } from '../services/PlacementHabitAnalyzer';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -31,8 +32,22 @@ export default function HomeScreen() {
   const [selectedMinutes, setSelectedMinutes] = useState(60);
   const [customInput, setCustomInput] = useState('');
 
-  // P.5 / P.6 — persisted placement selection
-  const { placement, setPlacement, profile: placementProfile } = usePlacement();
+  // P.12 -- AI placement habit recommendation
+  const [habitRecommendation, setHabitRecommendation] = useState<PlacementRecommendation | null>(null);
+
+  // P.5 / P.6 / P.10 — persisted placement selection (multi)
+  const { placements, placement, togglePlacement, setPlacements, profile: placementProfile } = usePlacement();
+
+  // 5.4 — Tier limits (for maxPlacements gating)
+  const { limits: tierLimits } = useTier();
+
+  // P.12 — Reload AI habit recommendation each time screen is focused
+  // (ensures fresh data after a nap completes)
+  useFocusEffect(
+    useCallback(() => {
+      placementHabitAnalyzer.loadRecommendation().then(setHabitRecommendation).catch(() => {});
+    }, [])
+  );
 
   // 3.4 / 3.5 / 3.6 / 3.7 + P.9 — adaptive threshold, keyed per placement
   const { thresholdMinutes, isFirstSession, sessionCount } = useAdaptiveThreshold(placement);
@@ -46,9 +61,6 @@ export default function HomeScreen() {
   // 4.3 / 4.4 / 4.7 — AI latency prediction + confidence
   const { isAIActive, predictedLatency, confidence } = useAIModel();
 
-  // 5.4 — Tier limits (AI card gating)
-  const { limits } = useTier();
-
   // 5.2 — Tier gate (daily nap limit)
   const { canStart, upgradeReason, dailyCount, dailyLimit } = useTierGate();
 
@@ -60,7 +72,7 @@ export default function HomeScreen() {
       return;
     }
     const mins = effectiveMinutes > 0 ? effectiveMinutes : 20;
-    navigation.navigate('Monitoring', { targetMinutes: mins, placement });
+    navigation.navigate('Monitoring', { targetMinutes: mins, placement, placements });
   }
 
   const aiLabel = isFirstSession
@@ -179,7 +191,7 @@ export default function HomeScreen() {
 
         {/* AI Insights card (5.4: locked overlay when AI disabled) */}
         <View style={styles.insightCard}>
-          {limits.aiEnabled ? (
+          {tierLimits.aiEnabled ? (
             <>
               <View style={styles.insightTop}>
                 <View style={styles.insightIconBox}>
@@ -191,7 +203,7 @@ export default function HomeScreen() {
                     <Text style={styles.insightConfValue}>
                       ~{isAIActive ? predictedLatency : thresholdMinutes} min
                     </Text>
-                    {isAIActive && limits.confidenceEnabled && (
+                    {isAIActive && tierLimits.confidenceEnabled && (
                       <Text style={styles.insightConfPct}>{confidence}% conf.</Text>
                     )}
                   </View>
@@ -219,20 +231,72 @@ export default function HomeScreen() {
           )}
         </View>
 
+        {/* P.12 — AI Habit Recommendation Card */}
+        {habitRecommendation && habitRecommendation.confidence === 'confident' && (
+          <View style={styles.habitCard}>
+            <View style={styles.habitTop}>
+              <View style={styles.habitIconBox}>
+                <MaterialCommunityIcons name="brain" size={18} color={Colors.primary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.habitLabel}>BEST PLACEMENT FOR YOU</Text>
+                <Text style={styles.habitCombo}>
+                  {habitRecommendation.placements
+                    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+                    .join(' + ')}
+                </Text>
+              </View>
+              <View style={styles.habitScoreBadge}>
+                <Text style={styles.habitScoreText}>{habitRecommendation.score}</Text>
+                <Text style={styles.habitScoreUnit}>/100</Text>
+              </View>
+            </View>
+            <Text style={styles.habitReason}>{habitRecommendation.reason}</Text>
+            <TouchableOpacity
+              style={styles.habitApplyBtn}
+              onPress={() => setPlacements(habitRecommendation.placements.slice(0, tierLimits.maxPlacements))}
+              activeOpacity={0.8}
+            >
+              <MaterialCommunityIcons name="check-circle-outline" size={14} color={Colors.primary} />
+              <Text style={styles.habitApplyText}>Apply this setup</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* P.6 — Phone placement picker */}
         <View style={styles.placementSection}>
-          <Text style={styles.sectionLabel}>Phone placement</Text>
+          <View style={styles.placementHeader}>
+            <Text style={styles.sectionLabel}>Phone placement</Text>
+            {tierLimits.maxPlacements > 1 && (
+              <View style={styles.placementBadge}>
+                <Text style={styles.placementBadgeText}>{placements.length}/{tierLimits.maxPlacements} active</Text>
+              </View>
+            )}
+          </View>
+          {tierLimits.maxPlacements > 1 && (
+            <Text style={styles.placementHint}>
+              {tierLimits.maxPlacements === 2
+                ? 'Pro: combine 2 placements for better accuracy'
+                : 'Max: combine up to 4 placements for maximum accuracy'}
+            </Text>
+          )}
           <View style={styles.placementGrid}>
             {(['mattress', 'hand', 'chest', 'pocket'] as PhonePlacement[]).map((p) => {
               const prof = PLACEMENT_PROFILES[p];
-              const active = placement === p;
+              const active = placements.includes(p);
+              const isPrimary = placements[0] === p && placements.length > 1;
               return (
                 <TouchableOpacity
                   key={p}
                   style={[styles.placementChip, active && styles.placementChipActive]}
-                  onPress={() => setPlacement(p)}
+                  onPress={() => togglePlacement(p, tierLimits.maxPlacements)}
                   activeOpacity={0.8}
                 >
+                  {isPrimary && (
+                    <View style={styles.primaryBadge}>
+                      <Text style={styles.primaryBadgeText}>Primary</Text>
+                    </View>
+                  )}
                   <MaterialCommunityIcons
                     name={prof.icon as any}
                     size={20}
@@ -256,6 +320,16 @@ export default function HomeScreen() {
             })}
           </View>
           <Text style={styles.placementTip}>{placementProfile.tip}</Text>
+          {tierLimits.maxPlacements === 1 && (
+            <TouchableOpacity
+              style={styles.upgradeMultiBtn}
+              onPress={() => navigation.navigate('Paywall', { reason: 'Upgrade to Pro to combine placements' })}
+              activeOpacity={0.8}
+            >
+              <MaterialCommunityIcons name='crown' size={13} color={Colors.primary} />
+              <Text style={styles.upgradeMultiText}>Upgrade to combine placements</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Start Button */}
@@ -403,8 +477,12 @@ const styles = StyleSheet.create({
   lockedTitle: { fontSize: 16, fontWeight: '700', color: Colors.on_surface },
   lockedSubtitle: { fontSize: 13, color: Colors.on_surface_variant },
 
-  // Placement picker (P.6)
-  placementSection: { gap: 12, marginBottom: 24 },
+  // Placement picker (P.6 / P.10)
+  placementSection: { gap: 10, marginBottom: 24 },
+  placementHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  placementBadge: { backgroundColor: 'rgba(168,164,255,0.15)', borderRadius: 99, paddingHorizontal: 10, paddingVertical: 3 },
+  placementBadgeText: { fontSize: 10, color: Colors.primary, fontWeight: '700' },
+  placementHint: { fontSize: 11, color: Colors.on_surface_variant, lineHeight: 16, paddingHorizontal: 2 },
   placementGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   placementChip: {
     width: '47%',
@@ -412,6 +490,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surface_container,
     alignItems: 'center', gap: 6,
     borderWidth: 1, borderColor: 'transparent',
+    position: 'relative' as const,
   },
   placementChipActive: {
     borderColor: Colors.primary,
@@ -424,6 +503,28 @@ const styles = StyleSheet.create({
     fontSize: 12, color: Colors.on_surface_variant, lineHeight: 18,
     paddingHorizontal: 4,
   },
+  primaryBadge: { position: 'absolute', top: 6, right: 6, backgroundColor: Colors.primary, borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 },
+  primaryBadgeText: { fontSize: 8, color: Colors.on_primary, fontWeight: '700' },
+  upgradeMultiBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, backgroundColor: 'rgba(168,164,255,0.08)', borderWidth: 1, borderColor: 'rgba(168,164,255,0.2)', alignSelf: 'flex-start', marginTop: 2 },
+  upgradeMultiText: { fontSize: 11, color: Colors.primary, fontWeight: '600' },
+
+  // P.12 -- habit recommendation card
+  habitCard: {
+    backgroundColor: 'rgba(168,164,255,0.08)',
+    borderRadius: 16, padding: 18, marginBottom: 16,
+    borderWidth: 1, borderColor: 'rgba(168,164,255,0.25)',
+    gap: 10,
+  },
+  habitTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  habitIconBox: { padding: 8, borderRadius: 8, backgroundColor: 'rgba(168,164,255,0.1)' },
+  habitLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1.5, color: Colors.on_surface_variant, textTransform: 'uppercase' },
+  habitCombo: { fontSize: 16, fontWeight: '800', color: Colors.on_surface, letterSpacing: -0.3, marginTop: 1 },
+  habitScoreBadge: { alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(168,164,255,0.15)', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 6 },
+  habitScoreText: { fontSize: 20, fontWeight: '800', color: Colors.primary, lineHeight: 22 },
+  habitScoreUnit: { fontSize: 9, color: Colors.on_surface_variant, fontWeight: '500' },
+  habitReason: { fontSize: 12, color: Colors.on_surface_variant, lineHeight: 18 },
+  habitApplyBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20, backgroundColor: 'rgba(168,164,255,0.1)', borderWidth: 1, borderColor: 'rgba(168,164,255,0.3)' },
+  habitApplyText: { fontSize: 12, color: Colors.primary, fontWeight: '700' },
 
   // Start button
   startWrap: { paddingTop: 4 },
