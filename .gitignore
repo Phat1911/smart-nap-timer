@@ -43,3 +43,6 @@ THINKING.md
 # generated native folders
 /ios
 /android
+
+.claude
+eas.json
