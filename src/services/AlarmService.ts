@@ -1,5 +1,31 @@
+/**
+ * AlarmService — Manages scheduling and cancelling alarm notifications
+ *
+ * Responsible for:
+ * - Requesting notification permission before scheduling
+ * - Creating the Android "alarm" notification channel with bypassDnd and MAX importance
+ * - Scheduling a notification with a TIME_INTERVAL trigger (delayMinutes * 60 seconds)
+ * - Cancelling any previously scheduled alarm before scheduling a new one
+ * - Supporting a linear volume ramp from 0 → 1 over ALARM_RAMP_SECONDS
+ *
+ * Used by:
+ * - SleepingScreen: scheduleAlarm() when the countdown starts, cancelAlarm() on unmount
+ * - WakeScreen: cancelAll() when the user has woken up
+ *
+ * Notes:
+ * - expo-notifications is NOT supported in Expo Go (SDK 53+)
+ *   — a mock is used in __DEV__ to avoid crashes
+ * - 'alarm.wav' must be in assets and declared in app.json plugins
+ *   to be bundled into the Android/iOS build
+ */
+
+// ─────────────────────────────────────────
+// Imports
+// ─────────────────────────────────────────
+
 import { Platform } from 'react-native';
 import { ALARM_RAMP_SECONDS, SNOOZE_MINUTES } from '../constants/config';
+import { Strings } from '../constants/strings';
 
 // expo-notifications is NOT supported in Expo Go (SDK 53+).
 // In __DEV__ (Expo Go) all notification calls are mocked to no-ops.
@@ -33,14 +59,27 @@ if (!__DEV__) {
   };
 }
 
+// ─────────────────────────────────────────
+// Class Definition
+// ─────────────────────────────────────────
+
 class AlarmService {
   private scheduledId: string | null = null;
 
+  /**
+   * Requests notification permission from the user
+   * @returns true if permission is granted
+   */
   async requestPermission(): Promise<boolean> {
     const { status } = await Notifications.requestPermissionsAsync();
     return status === 'granted';
   }
 
+  /**
+   * Schedules an alarm notification after delayMinutes minutes
+   * @param delayMinutes - Number of minutes before the alarm fires
+   * @returns The scheduled notification ID, or null if permission is not granted
+   */
   async scheduleAlarm(delayMinutes: number): Promise<string | null> {
     const hasPermission = await this.requestPermission();
     if (!hasPermission) return null;
@@ -61,8 +100,8 @@ class AlarmService {
 
     const id = await Notifications.scheduleNotificationAsync({
       content: {
-        title: 'Wake up!',
-        body: `Your ${delayMinutes}-minute nap is complete.`,
+        title: Strings.alarm_notification_title,
+        body: Strings.alarm_notification_body(delayMinutes),
         sound: 'alarm.wav',
         priority: Notifications.AndroidNotificationPriority.MAX,
         categoryIdentifier: 'alarm',
@@ -82,6 +121,9 @@ class AlarmService {
     return this.scheduleAlarm(SNOOZE_MINUTES);
   }
 
+  /**
+   * Cancels the previously scheduled notification (if any)
+   */
   async cancelAlarm(): Promise<void> {
     if (this.scheduledId) {
       await Notifications.cancelScheduledNotificationAsync(this.scheduledId);
@@ -94,8 +136,12 @@ class AlarmService {
     this.scheduledId = null;
   }
 
-  // Gradual volume ramp -- call this when alarm fires in-app
-  // Returns a cleanup function
+  /**
+   * Starts a linear volume ramp from 0 → 1 over ALARM_RAMP_SECONDS seconds
+   * @param onVolumeChange - Callback that receives the new volume each second
+   * @param onComplete - Callback when maximum volume is reached
+   * @returns A cleanup function to stop the ramp when needed
+   */
   startGradualRamp(
     onVolumeChange: (volume: number) => void,
     onComplete: () => void
@@ -121,5 +167,9 @@ class AlarmService {
     return this.scheduledId !== null;
   }
 }
+
+// ─────────────────────────────────────────
+// Exports
+// ─────────────────────────────────────────
 
 export const alarmService = new AlarmService();

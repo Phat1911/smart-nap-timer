@@ -1,10 +1,31 @@
 /**
- * SleepingScreen
+ * SleepingScreen — Countdown screen while the user is sleeping
+ *
+ * Responsible for:
+ * - Counting down nap time from targetMinutes to 0
+ * - Playing white noise (rain) with volume adjustable via slider
+ * - Scheduling an alarm notification as a backup (in case the app is killed)
+ * - Dimming the screen to minimum brightness to not disturb sleep
+ * - On countdown end: saving NapSession and navigating to WakeScreen
+ *
+ * Used by:
+ * - AppNavigator: "Sleeping" screen in the stack
+ * - MonitoringScreen: navigates here when sleep is detected
+ *
+ * Notes:
+ * - PanResponder used instead of Slider component to avoid heavy dependency
+ * - trackWidthRef measured via onLayout for accurate volume ratio calculation
+ * - Alarm is cancelled in cleanup to avoid extra notifications if the user
+ *   closes the app before time runs out
  *
  * Tasks wired here:
  *   2.20 — Volume slider wired to audioService.setVolume()
  *   2.21 — Screen brightness dimmed via useScreenDim hook
  */
+
+// ─────────────────────────────────────────
+// Imports
+// ─────────────────────────────────────────
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
@@ -15,10 +36,10 @@ import {
   LayoutChangeEvent,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MaterialCommunityIcons }             from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp }          from '@react-navigation/native-stack';
 import { Colors }                             from '../constants';
+import { useLanguage }                        from '../contexts/LanguageContext';
 import { RootStackParamList }                 from '../navigation/AppNavigator';
 import { audioService }                       from '../services/AudioService';
 import { alarmService }                       from '../services/AlarmService';
@@ -27,12 +48,25 @@ import { usageService }                       from '../services/UsageService';
 import { useScreenDim }                       from '../hooks/useScreenDim';
 import type { NapSession }                    from '../models/Session';
 
+// ─────────────────────────────────────────
+// Types / Interfaces
+// ─────────────────────────────────────────
+
 type Nav   = NativeStackNavigationProp<RootStackParamList>;
 type Route = RouteProp<RootStackParamList, 'Sleeping'>;
 
+// ─────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────
+
 const INITIAL_VOLUME = 0.4;
 
+// ─────────────────────────────────────────
+// Render
+// ─────────────────────────────────────────
+
 export default function SleepingScreen() {
+  const { strings: Strings } = useLanguage();
   const navigation = useNavigation<Nav>();
   const route      = useRoute<Route>();
   const {
@@ -155,36 +189,26 @@ export default function SleepingScreen() {
 
       {/* Top label */}
       <View style={styles.topArea}>
-        <Text style={styles.topLabel}>Sleep well</Text>
+        <Text style={styles.topLabel}>{Strings.sleeping_title}</Text>
       </View>
 
       {/* Countdown (task 2.21: dim via useScreenDim, not opacity in JSX) */}
       <View style={styles.centerArea}>
         <Text style={styles.countdown}>{timeStr}</Text>
-        <Text style={styles.countdownLabel}>Real sleep remaining</Text>
+        <Text style={styles.countdownLabel}>{Strings.sleeping_countdown}</Text>
       </View>
 
       {/* Bottom: audio + volume slider (task 2.20) */}
       <View style={styles.bottomArea}>
         {/* Audio type indicator */}
         <View style={styles.audioRow}>
-          <MaterialCommunityIcons
-            name="sine-wave"
-            size={16}
-            color={Colors.on_surface_variant}
-            style={styles.dimIcon}
-          />
-          <Text style={styles.audioText}>Rain</Text>
+          <Text style={[{ fontSize: 16 }, styles.dimIcon]}>〰️</Text>
+          <Text style={styles.audioText}>{Strings.sleeping_audio_rain}</Text>
         </View>
 
         {/* Volume slider wired to audioService.setVolume() (task 2.20) */}
         <View style={styles.volumeRow}>
-          <MaterialCommunityIcons
-            name="volume-mute"
-            size={12}
-            color={Colors.on_surface_variant}
-            style={styles.dimIcon}
-          />
+          <Text style={[{ fontSize: 12 }, styles.dimIcon]}>🔇</Text>
           <View
             style={styles.sliderTrack}
             onLayout={onTrackLayout}
@@ -198,12 +222,7 @@ export default function SleepingScreen() {
               ]}
             />
           </View>
-          <MaterialCommunityIcons
-            name="volume-high"
-            size={12}
-            color={Colors.on_surface_variant}
-            style={styles.dimIcon}
-          />
+          <Text style={[{ fontSize: 12 }, styles.dimIcon]}>🔊</Text>
         </View>
       </View>
     </SafeAreaView>

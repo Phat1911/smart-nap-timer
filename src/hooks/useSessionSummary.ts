@@ -1,12 +1,36 @@
 /**
+ * useSessionSummary — Hooks and helpers to build nap session summaries and improvement suggestions
+ *
+ * Responsible for:
+ * - buildSessionSummary(): computes isInsufficient, missingMinutes, progressPercent
+ * - useInsufficientSuggestion(): proposes a shorter targetMinutes after 3+ insufficient streak
+ *
+ * Used by:
+ * - WakeScreen: buildSessionSummary() to display the summary card
+ * - WakeScreen: useInsufficientSuggestion() for the suggestion card (4.9)
+ *
+ * Notes:
+ * - The shorter-target suggestion only fires when: streak >= 3 AND avgActual < avgTarget * 0.75
+ *   (does not suggest if only slightly short — avoids over-suggesting)
+ * - snapToBucket() picks the nearest standard duration (20/60/90) to avgActual
+ *   but it must be less than avgTarget so the suggestion is actually shorter
+ *
  * Tasks 3.8, 3.15, 3.16 — Session summary + insufficient sleep detection
  * Task 4.9 — Shorter target suggestion after 3-streak of insufficient sleep
  * Used by WakeScreen to build the summary card and insufficient sleep warning.
  */
+// ─────────────────────────────────────────
+// Imports
+// ─────────────────────────────────────────
+
 import { useState, useEffect } from 'react';
 import { sessionService } from '../services/SessionService';
 import { DURATION_SUGGESTIONS } from '../constants/config';
 import type { DetectionMethod } from '../models/Session';
+
+// ─────────────────────────────────────────
+// Types / Interfaces
+// ─────────────────────────────────────────
 
 export interface SessionSummaryData {
   targetMinutes: number;
@@ -31,6 +55,14 @@ export interface InsufficientSuggestionResult {
  *
  * The suggestion snaps avg_actual_sleep to the nearest standard duration
  * (20 / 60 / 90) that is strictly below the avg target.
+ */
+// ─────────────────────────────────────────
+// Hooks
+// ─────────────────────────────────────────
+
+/**
+ * Hook to check whether a shorter targetMinutes should be suggested (after 3+ insufficient streak)
+ * @returns shouldSuggestShorterTarget, suggestedTargetMinutes
  */
 export function useInsufficientSuggestion(): InsufficientSuggestionResult {
   const [result, setResult] = useState<InsufficientSuggestionResult>({
@@ -83,6 +115,14 @@ export function useInsufficientSuggestion(): InsufficientSuggestionResult {
 
 // ── Session summary builder ───────────────────────────────────────────────────
 
+/**
+ * Builds a nap session summary from raw metrics
+ * @param targetMinutes - Target sleep time (minutes)
+ * @param actualMinutes - Actual sleep time (minutes)
+ * @param latencyMinutes - Time waiting to fall asleep (minutes)
+ * @param detectionMethod - Detection method used
+ * @returns SessionSummaryData with isInsufficient, missingMinutes, progressPercent
+ */
 export function buildSessionSummary(
   targetMinutes: number,
   actualMinutes: number,

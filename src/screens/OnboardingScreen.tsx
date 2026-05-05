@@ -1,4 +1,26 @@
-import React, { useState, useRef } from 'react';
+/**
+ * OnboardingScreen — Introduction screen and initial phone placement selection
+ *
+ * Responsible for:
+ * - Displaying feature introduction slides (horizontal FlatList)
+ * - Allowing the user to select their preferred phone placement during onboarding
+ * - On completion: saving the selected placement and navigating to the Main screen
+ * - Registering the "Skip" or "Done" button in the top-right via TopRightContext
+ *
+ * Used by:
+ * - AppNavigator: first screen in the stack (initialRouteName: "Onboarding")
+ *
+ * Notes:
+ * - Onboarding is shown only once — after completion, the stack is replaced with "Main"
+ * - If the user has opened the app before, OnboardingScreen still shows but can be
+ *   skipped via an AsyncStorage check (if implemented)
+ */
+
+// ─────────────────────────────────────────
+// Imports
+// ─────────────────────────────────────────
+
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,54 +30,81 @@ import {
   Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Colors } from '../constants';
-import { Strings } from '../constants/strings';
+import { useLanguage } from '../contexts/LanguageContext';
+import { useTopRight } from '../contexts/TopRightContext';
 import { RootStackParamList } from '../navigation/AppNavigator';
-import { PLACEMENT_PROFILES } from '../constants/config';
+import { PLACEMENT_PROFILES, getLocalizedPlacementProfiles } from '../constants/config';
 import { usePlacement } from '../hooks/usePlacement';
 import type { PhonePlacement } from '../models/Session';
 
+// ─────────────────────────────────────────
+// Types / Interfaces
+// ─────────────────────────────────────────
+
 type Nav = NativeStackNavigationProp<RootStackParamList>;
+
+// ─────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
-const SLIDES = [
-  {
-    icon: 'sleep' as const,
-    iconColor: Colors.primary,
-    title: Strings.onboarding_welcome_title,
-    body: Strings.onboarding_welcome_body,
-  },
-  {
-    // Slide 2 is replaced by the placement picker — these values are unused
-    icon: 'cellphone' as const,
-    iconColor: Colors.secondary,
-    title: Strings.onboarding_placement_title,
-    body: Strings.onboarding_placement_body,
-  },
-  {
-    icon: 'lock-open-check-outline' as const,
-    iconColor: Colors.tertiary,
-    title: Strings.onboarding_permissions_title,
-    body: Strings.onboarding_permissions_body,
-  },
-  {
-    icon: 'brain' as const,
-    iconColor: Colors.primary,
-    title: Strings.onboarding_how_title,
-    body: Strings.onboarding_how_body,
-  },
-];
-
 const PLACEMENT_ORDER: PhonePlacement[] = ['mattress', 'hand', 'chest', 'pocket'];
 
+// ─────────────────────────────────────────
+// Render
+// ─────────────────────────────────────────
+
 export default function OnboardingScreen() {
+  const { strings: Strings } = useLanguage();
   const navigation = useNavigation<Nav>();
   const [index, setIndex] = useState(0);
   const listRef = useRef<FlatList>(null);
+
+  const SLIDES = [
+    {
+      icon: '😴',
+      iconColor: Colors.primary,
+      title: Strings.onboarding_welcome_title,
+      body: Strings.onboarding_welcome_body,
+    },
+    {
+      // Slide 2 is replaced by the placement picker — these values are unused
+      icon: '📱',
+      iconColor: Colors.secondary,
+      title: Strings.onboarding_placement_title,
+      body: Strings.onboarding_placement_body,
+    },
+    {
+      icon: '🔓',
+      iconColor: Colors.tertiary,
+      title: Strings.onboarding_permissions_title,
+      body: Strings.onboarding_permissions_body,
+    },
+    {
+      icon: '🧠',
+      iconColor: Colors.primary,
+      title: Strings.onboarding_how_title,
+      body: Strings.onboarding_how_body,
+    },
+    {
+      icon: '⏳',
+      iconColor: Colors.secondary,
+      title: Strings.onboarding_fallasleep_title,
+      body: Strings.onboarding_fallasleep_body,
+    },
+    {
+      icon: '📈',
+      iconColor: Colors.primary,
+      title: Strings.onboarding_ai_title,
+      body: Strings.onboarding_ai_body,
+    },
+  ];
+
+  const { setButton } = useTopRight();
 
   // 6.1 — Persisted placement selection (set during onboarding slide 2)
   const { placement, setPlacements } = usePlacement();
@@ -79,17 +128,21 @@ export default function OnboardingScreen() {
   const slide = SLIDES[index];
   const isLast = index === SLIDES.length - 1;
 
+  // Register/unregister Skip button in the global top-right overlay
+  useEffect(() => {
+    if (isLast) {
+      setButton(null);
+    } else {
+      setButton({ type: 'text', label: Strings.onboarding_skip, onPress: skip });
+    }
+    return () => setButton(null);
+  }, [isLast, Strings.onboarding_skip]);
+
   return (
     <SafeAreaView style={styles.root} edges={['top']}>
       {/* Top glow */}
       <View style={styles.glow} pointerEvents="none" />
 
-      {/* Skip */}
-      <View style={styles.topBar}>
-        <TouchableOpacity onPress={skip} activeOpacity={0.7}>
-          <Text style={styles.skipText}>{isLast ? '' : Strings.onboarding_skip}</Text>
-        </TouchableOpacity>
-      </View>
 
       {/* Slides */}
       <FlatList
@@ -109,7 +162,7 @@ export default function OnboardingScreen() {
                 <Text style={styles.slideBody}>{item.body}</Text>
                 <View style={styles.placementGrid}>
                   {PLACEMENT_ORDER.map((p) => {
-                    const prof = PLACEMENT_PROFILES[p];
+                    const prof = getLocalizedPlacementProfiles(Strings)[p];
                     const active = placement === p;
                     return (
                       <TouchableOpacity
@@ -118,22 +171,15 @@ export default function OnboardingScreen() {
                         onPress={() => setPlacements([p])}
                         activeOpacity={0.8}
                       >
-                        <MaterialCommunityIcons
-                          name={prof.icon as any}
-                          size={24}
-                          color={active ? Colors.primary : Colors.on_surface_variant}
-                        />
+                        <Text style={{ fontSize: 24 }}>{prof.icon}</Text>
                         <Text style={[styles.placementLabel, active && styles.placementLabelActive]}>
                           {prof.label}
                         </Text>
                         <View style={styles.placementStars}>
                           {Array.from({ length: 4 }).map((_, i) => (
-                            <MaterialCommunityIcons
-                              key={i}
-                              name={i < prof.accuracyStars ? 'star' : 'star-outline'}
-                              size={10}
-                              color={active ? Colors.primary : Colors.outline_variant}
-                            />
+                            <Text key={i} style={{ fontSize: 10 }}>
+                              {i < prof.accuracyStars ? '★' : '☆'}
+                            </Text>
                           ))}
                         </View>
                       </TouchableOpacity>
@@ -141,7 +187,7 @@ export default function OnboardingScreen() {
                   })}
                 </View>
                 <Text style={styles.placementTip}>
-                  {PLACEMENT_PROFILES[placement].tip}
+                  {getLocalizedPlacementProfiles(Strings)[placement].tip}
                 </Text>
               </View>
             );
@@ -150,7 +196,7 @@ export default function OnboardingScreen() {
           return (
             <View style={styles.slide}>
               <View style={styles.iconCircle}>
-                <MaterialCommunityIcons name={item.icon} size={64} color={item.iconColor} />
+                <Text style={{ fontSize: 64 }}>{item.icon}</Text>
               </View>
               <Text style={styles.slideTitle}>{item.title}</Text>
               <Text style={styles.slideBody}>{item.body}</Text>
@@ -176,12 +222,16 @@ export default function OnboardingScreen() {
           <Text style={styles.nextBtnText}>
             {isLast ? Strings.onboarding_get_started : Strings.onboarding_next}
           </Text>
-          <MaterialCommunityIcons name="arrow-right" size={18} color={Colors.on_primary} />
+          <Text style={{ fontSize: 18 }}>→</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
 }
+
+// ─────────────────────────────────────────
+// Styles
+// ─────────────────────────────────────────
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.background },

@@ -1,26 +1,49 @@
 /**
- * DEV TOOLS -- for testing only
- * Access: tap the version text in SettingsScreen 5 times
- * Hidden from production users -- no App Store/Play Store impact
+ * DevToolsScreen — Developer tools screen (used for testing only)
+ *
+ * Responsible for:
+ * - Allowing tier override (free / pro / max) without purchasing
+ * - Resetting the usage counter (daily nap count)
+ * - Viewing current tier and usage count
+ * - Overriding the sleep score trigger threshold (dev-only runtime)
+ * - Resetting all session data
+ *
+ * Used by:
+ * - AppNavigator: "DevTools" screen as a modal
+ * - SettingsScreen: opened by tapping the version text 5 times in a row
+ *
+ * Notes:
+ * - Never shown to end users — no link from the normal UI
+ * - Does not affect App Store / Play Store since it only overwrites local AsyncStorage
+ * - _devOverrides in config.ts allows changing SLEEP_SCORE_TRIGGER at runtime
  */
+// ─────────────────────────────────────────
+// Imports
+// ─────────────────────────────────────────
+
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView,
   TouchableOpacity, SafeAreaView, Alert,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../constants';
 import { tierService } from '../services/TierService';
 import { usageService } from '../services/UsageService';
 import { sessionService } from '../services/SessionService';
 import { TierName, TIER_LIMITS } from '../models/Tier';
+import { _devOverrides } from '../constants/config';
+
+// ─────────────────────────────────────────
+// Render
+// ─────────────────────────────────────────
 
 export default function DevToolsScreen() {
   const navigation = useNavigation();
   const [tier, setTier]             = useState<TierName>('free');
   const [dailyCount, setDailyCount] = useState(0);
   const [sessionCount, setSessionCount] = useState(0);
+  const [trigger, setTrigger]       = useState(_devOverrides.sleepScoreTrigger);
 
   // Defense-in-depth: block access in production even if deep-linked
   useEffect(() => {
@@ -78,7 +101,7 @@ export default function DevToolsScreen() {
     <SafeAreaView style={styles.root}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.back}>
-          <MaterialCommunityIcons name="arrow-left" size={22} color={Colors.primary} />
+          <Text style={{ fontSize: 22 }}>←</Text>
         </TouchableOpacity>
         <View>
           <Text style={styles.title}>Dev Tools</Text>
@@ -125,16 +148,36 @@ export default function DevToolsScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Usage Controls</Text>
           <TouchableOpacity style={styles.actionBtn} onPress={resetUsage} activeOpacity={0.8}>
-            <MaterialCommunityIcons name="refresh" size={18} color={Colors.primary} />
+            <Text style={{ fontSize: 18 }}>🔄</Text>
             <Text style={styles.actionBtnText}>Reset daily usage counter</Text>
           </TouchableOpacity>
+        </View>
+
+        {/* Threshold tuning */}
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>Threshold Tuning</Text>
+          <Text style={styles.tuningHint}>Sleep score trigger (current: {trigger}). Changes live — no restart needed.</Text>
+          <View style={styles.btnRow}>
+            {[60, 65, 70, 75, 80, 85].map((v) => (
+              <TouchableOpacity
+                key={v}
+                style={[styles.tierBtn, trigger === v && styles.tierBtnActive]}
+                onPress={() => { _devOverrides.sleepScoreTrigger = v; setTrigger(v); }}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.tierBtnText, trigger === v && styles.tierBtnTextActive]}>
+                  {v}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
         </View>
 
         {/* Danger zone */}
         <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: Colors.error }]}>Danger Zone</Text>
           <TouchableOpacity style={[styles.actionBtn, styles.dangerBtn]} onPress={clearAllData} activeOpacity={0.8}>
-            <MaterialCommunityIcons name="delete-outline" size={18} color={Colors.error} />
+            <Text style={{ fontSize: 18 }}>🗑️</Text>
             <Text style={[styles.actionBtnText, { color: Colors.error }]}>Clear all data + reset to Free</Text>
           </TouchableOpacity>
         </View>
@@ -144,6 +187,10 @@ export default function DevToolsScreen() {
   );
 }
 
+// ─────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────
+
 function Row({ label, value, valueColor }: { label: string; value: string; valueColor?: string }) {
   return (
     <View style={rowStyles.row}>
@@ -152,6 +199,10 @@ function Row({ label, value, valueColor }: { label: string; value: string; value
     </View>
   );
 }
+
+// ─────────────────────────────────────────
+// Styles
+// ─────────────────────────────────────────
 
 const rowStyles = StyleSheet.create({
   row:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10 },
@@ -199,4 +250,7 @@ const styles = StyleSheet.create({
   },
   dangerBtn:     { borderColor: 'rgba(255,100,100,0.3)' },
   actionBtnText: { fontSize: 14, fontWeight: '500', color: Colors.on_surface },
+  tuningHint: {
+    fontSize: 11, color: Colors.on_surface_variant, lineHeight: 16,
+  },
 });

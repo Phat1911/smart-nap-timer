@@ -1,3 +1,23 @@
+/**
+ * colors.ts — Material Design 3 Dark Theme color palette for the entire app
+ *
+ * Responsible for:
+ * - Defining the Colors object: all colors used in the UI (background, surface, primary, error...)
+ * - Ensuring color consistency across all screens and components
+ *
+ * Used by:
+ * - All screens, components, and StyleSheets in the project
+ *
+ * Notes:
+ * - Entirely dark theme — no light mode
+ * - surface_container_* are different levels of background (lowest → highest = darker → lighter)
+ * - primary_dim (#675df9) used for button background; primary (#a8a4ff) used for text/icon active
+ */
+
+// ─────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────
+
 // Material Design 3 Dark Theme palette matching the app design
 export const Colors = {
   // Core backgrounds

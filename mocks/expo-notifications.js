@@ -1,0 +1,17 @@
+module.exports = {
+  requestPermissionsAsync: () => Promise.resolve({ granted: true, status: 'granted' }),
+  scheduleNotificationAsync: () => Promise.resolve('mock-id'),
+  cancelAllScheduledNotificationsAsync: () => Promise.resolve(),
+  cancelScheduledNotificationAsync: () => Promise.resolve(),
+  setNotificationHandler: () => {},
+  addNotificationReceivedListener: () => ({ remove: () => {} }),
+  addNotificationResponseReceivedListener: () => ({ remove: () => {} }),
+  getBadgeCountAsync: () => Promise.resolve(0),
+  setBadgeCountAsync: () => Promise.resolve(),
+  dismissNotificationAsync: () => Promise.resolve(),
+  dismissAllNotificationsAsync: () => Promise.resolve(),
+  setNotificationChannelGroupAsync: () => Promise.resolve(),
+  setNotificationCategoryAsync: () => Promise.resolve(),
+  getNotificationPermissionsAsync: () => Promise.resolve({ canAlert: true, canBadge: true, canSound: true, canInterrupts: true }),
+  setNotificationChannelAsync: () => Promise.resolve(),
+};

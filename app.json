@@ -79,17 +79,17 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
+    "updates": {
+      "enabled": false,
+      "url": "https://u.expo.dev/d23bc949-943d-4961-aae6-6d8405ba7970"
+    },
     "extra": {
       "eas": {
         "projectId": "d23bc949-943d-4961-aae6-6d8405ba7970"
       }
     },
-    "owner": "phat1911",
     "runtimeVersion": {
       "policy": "appVersion"
-    },
-    "updates": {
-      "url": "https://u.expo.dev/d23bc949-943d-4961-aae6-6d8405ba7970"
     }
   }
 }

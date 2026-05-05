@@ -1,13 +1,34 @@
+/**
+ * AppNavigator — Navigation configuration for the entire app
+ *
+ * Responsible for:
+ * - Defining RootStackParamList (all stack screens + params)
+ * - Defining TabParamList (3 main tabs: Home, Dashboard, Settings)
+ * - Creating the Bottom Tab Navigator with custom icons and styles
+ * - Creating the outer Stack Navigator for navigating between nap flow screens
+ *
+ * Used by:
+ * - App.tsx: renders <AppNavigator /> inside providers
+ *
+ * Notes:
+ * - Stack starts at "Onboarding" — will replace to "Main" if already onboarded
+ * - DevTools only opens as a modal (no back navigation bar)
+ * - Tab bar is positioned absolute at the bottom of the screen with blur effect
+ */
+
+// ─────────────────────────────────────────
+// Imports
+// ─────────────────────────────────────────
+
 import React from 'react';
-import { View, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import type { PhonePlacement, DetectionMethod } from '../models/Session';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-
 import PaywallScreen from '../screens/PaywallScreen';
 import DevToolsScreen from '../screens/DevToolsScreen';
+import GuideScreen from '../screens/GuideScreen';
 import HomeScreen from '../screens/HomeScreen';
 import MonitoringScreen from '../screens/MonitoringScreen';
 import SleepingScreen from '../screens/SleepingScreen';
@@ -17,10 +38,14 @@ import SettingsScreen from '../screens/SettingsScreen';
 import OnboardingScreen from '../screens/OnboardingScreen';
 import { Colors } from '../constants';
 
+// ─────────────────────────────────────────
+// Types / Interfaces
+// ─────────────────────────────────────────
+
 export type RootStackParamList = {
   Onboarding: undefined;
   Main: undefined;
-  Monitoring: { targetMinutes: number; placement: PhonePlacement; placements: PhonePlacement[] };
+  Monitoring: { targetMinutes: number; placement: PhonePlacement; placements: PhonePlacement[]; maxFallAsleepMinutes: number };
   Sleeping: {
     targetMinutes: number;
     sleepStartTime: number;
@@ -32,9 +57,10 @@ export type RootStackParamList = {
     detectionMethod: DetectionMethod;
     confidenceScore: number;
   };
-  Wake: { sessionId: string };
+  Wake: { sessionId: string; fallAsleepTimeout?: boolean };
   Paywall: { reason?: string };
   DevTools: undefined;
+  Guide: undefined;
 };
 
 export type TabParamList = {
@@ -43,16 +69,22 @@ export type TabParamList = {
   Settings: undefined;
 };
 
+// ─────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────
+
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<TabParamList>();
 
-type TabIconName = 'sleep' | 'chart-line' | 'cog';
-
-const TAB_ICONS: Record<string, TabIconName> = {
-  Home: 'sleep',
-  Dashboard: 'chart-line',
-  Settings: 'cog',
+const TAB_EMOJI: Record<string, string> = {
+  Home: '🏠',
+  Dashboard: '📊',
+  Settings: '⚙️',
 };
+
+// ─────────────────────────────────────────
+// Render
+// ─────────────────────────────────────────
 
 function MainTabs() {
   return (
@@ -64,16 +96,14 @@ function MainTabs() {
         tabBarInactiveTintColor: Colors.on_surface_variant,
         tabBarShowLabel: true,
         tabBarLabelStyle: styles.tabLabel,
-        tabBarIcon: ({ focused, color, size }) => {
-          const iconName = TAB_ICONS[route.name];
+        tabBarIcon: ({ focused, size }) => {
+          const emoji = TAB_EMOJI[route.name];
           if (focused) {
             return (
-              <View style={styles.tabActiveIcon}>
-                <MaterialCommunityIcons name={iconName} size={size} color={color} />
-              </View>
+              <Text style={{ fontSize: size - 2, backgroundColor: Colors.secondary_container, borderRadius: 16, paddingHorizontal: 20, paddingVertical: 4, }}>{emoji}</Text>
             );
           }
-          return <MaterialCommunityIcons name={iconName} size={size} color={color} />;
+          return <Text style={{ fontSize: size - 2 }}>{emoji}</Text>;
         },
         tabBarBackground: () => <View style={styles.tabBarBg} />,
       })}
@@ -85,6 +115,9 @@ function MainTabs() {
   );
 }
 
+/**
+ * Root navigation component — wraps the entire app in NavigationContainer
+ */
 export default function AppNavigator() {
   return (
     <NavigationContainer>
@@ -104,10 +137,15 @@ export default function AppNavigator() {
         <Stack.Screen name="Wake" component={WakeScreen} />
         <Stack.Screen name="Paywall" component={PaywallScreen} />
         <Stack.Screen name="DevTools" component={DevToolsScreen} options={{ presentation: 'modal' }} />
+        <Stack.Screen name="Guide" component={GuideScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );
 }
+
+// ─────────────────────────────────────────
+// Styles
+// ─────────────────────────────────────────
 
 const styles = StyleSheet.create({
   tabBar: {
@@ -134,6 +172,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     paddingHorizontal: 20,
     paddingVertical: 4,
+    opacity: 0.3,
   },
   tabLabel: {
     fontSize: 10,

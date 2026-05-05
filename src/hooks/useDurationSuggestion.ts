@@ -1,4 +1,20 @@
 /**
+ * useDurationSuggestion — Hook for suggesting the optimal nap duration via AI or science defaults
+ *
+ * Responsible for:
+ * - Sessions 1-4: suggests by time-of-day defaults (morning/evening = 20 min, afternoon = 60)
+ * - Sessions 5+: trains AI per-bucket and picks the duration with the lowest predicted latency
+ * - Fallback: if not enough data for AI, uses the highest avg wake rating in the bucket
+ *
+ * Used by:
+ * - HomeScreen: the suggested duration is highlighted and marked "Recommended"
+ *
+ * Notes:
+ * - snapToBucket() snaps target_minutes to 20/60/90 — avoids bucket fragmentation
+ *   since users may have chosen a custom duration (e.g. 45 min → snaps to 60)
+ * - Trains a separate LinearRegression per bucket (not a shared model)
+ *   so each duration learns its own latency pattern
+ *
  * Task 3.14 — Duration suggestion logic
  * Sessions 1-4: suggest based on time-of-day science defaults.
  *
@@ -8,7 +24,12 @@
  * the current context, then pick the duration with the lowest predicted
  * latency. Falls back to wake-rating ranking when a bucket has < 2 sessions.
  */
+// ─────────────────────────────────────────
+// Imports
+// ─────────────────────────────────────────
+
 import { useState, useEffect } from 'react';
+import { useLanguage } from '../contexts/LanguageContext';
 import { sessionService } from '../services/SessionService';
 import { LinearRegression } from '../services/LinearRegression';
 import { sessionsToTrainingRows } from './useAIModel';
@@ -16,11 +37,19 @@ import { DURATION_SUGGESTIONS } from '../constants/config';
 import type { NapSession } from '../models/Session';
 import type { PredictInput } from '../services/LinearRegression';
 
+// ─────────────────────────────────────────
+// Types / Interfaces
+// ─────────────────────────────────────────
+
 export interface DurationSuggestion {
   recommendedMinutes: number;
   label: string;
   reason: string;
 }
+
+// ─────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────
 
 // Science-based defaults per time-of-day
 const SCIENCE_DEFAULTS: Record<string, number> = {
@@ -29,6 +58,10 @@ const SCIENCE_DEFAULTS: Record<string, number> = {
   afternoon: 60,
   evening: 20,
 };
+
+// ─────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────
 
 /** Snap a session's target_minutes to the nearest standard duration bucket */
 function snapToBucket(targetMinutes: number): number {
@@ -67,11 +100,20 @@ function predictPerBucket(
   return result;
 }
 
+// ─────────────────────────────────────────
+// Hook
+// ─────────────────────────────────────────
+
+/**
+ * Hook for nap duration suggestion — science defaults or AI prediction depending on session count
+ * @returns recommendedMinutes, label, reason
+ */
 export function useDurationSuggestion(): DurationSuggestion {
+  const { strings: Strings } = useLanguage();
   const [suggestion, setSuggestion] = useState<DurationSuggestion>({
     recommendedMinutes: 60,
     label: '60 min',
-    reason: 'Science default',
+    reason: Strings.suggestion_reason_science,
   });
 
   useEffect(() => {
@@ -87,7 +129,7 @@ export function useDurationSuggestion(): DurationSuggestion {
         setSuggestion({
           recommendedMinutes: mins,
           label: opt.label,
-          reason: 'Recommended for this time of day',
+          reason: Strings.suggestion_reason_time_of_day,
         });
         return;
       }
@@ -130,7 +172,7 @@ export function useDurationSuggestion(): DurationSuggestion {
       if (todSessions.length === 0) {
         const mins = SCIENCE_DEFAULTS[tod] ?? 60;
         const opt = DURATION_SUGGESTIONS.find((d) => d.value === mins) ?? DURATION_SUGGESTIONS[1];
-        setSuggestion({ recommendedMinutes: mins, label: opt.label, reason: 'Science default' });
+        setSuggestion({ recommendedMinutes: mins, label: opt.label, reason: Strings.suggestion_reason_science });
         return;
       }
 

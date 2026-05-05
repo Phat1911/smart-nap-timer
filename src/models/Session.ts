@@ -1,3 +1,32 @@
+/**
+ * Session.ts — Type definitions for nap sessions and related models
+ *
+ * Responsible for:
+ * - Defining NapSession: complete nap session structure (target, actual, latency, rating, placement...)
+ * - Defining SessionStats: aggregated statistics from all sessions
+ * - Defining AdaptiveThreshold: stillness threshold per time-of-day bucket
+ * - Defining AIModelWeights: trained LinearRegression weights
+ * - Defining PlacementHabit, PlacementRecommendation: phone placement habit analysis data
+ * - Union types: DetectionMethod, WakeRating, TimeOfDay, PhonePlacement
+ *
+ * Used by:
+ * - SessionService: save/read NapSession
+ * - ConfidenceEngine, SleepDetection: DetectionMethod
+ * - PlacementHabitAnalyzer: PlacementHabit, PlacementRecommendation
+ * - AIModelService, LinearRegression: AIModelWeights
+ * - All screens that display nap data
+ *
+ * Notes:
+ * - is_insufficient: actual < target * 0.85 (not 100% — a slight shortfall is still ok)
+ * - placements (array) vs placement (single string): placements is the new field (P.10 multi-placement)
+ *   placement is the primary placement — kept for backward-compat with old sessions
+ * - PlacementComboKey: sort before joining to ensure a canonical key regardless of selection order
+ */
+
+// ─────────────────────────────────────────
+// Types / Interfaces
+// ─────────────────────────────────────────
+
 export type DetectionMethod = 'accelerometer' | 'mic' | 'combo' | 'manual_tap';
 
 export type WakeRating = 1 | 2 | 3 | 4 | 5;

@@ -1,0 +1,20 @@
+module.exports = {
+  StorageAccessFramework: {
+    createFileAsync: () => Promise.resolve('mock-uri'),
+    deleteAsync: () => Promise.resolve(),
+    readAsStringAsync: () => Promise.resolve(''),
+    writeAsStringAsync: () => Promise.resolve(),
+  },
+  documentDirectory: 'mock:///',
+  cacheDirectory: 'mock:///cache',
+  writeAsStringAsync: () => Promise.resolve(),
+  readAsStringAsync: () => Promise.resolve(''),
+  deleteAsync: () => Promise.resolve(),
+  getInfoAsync: () => Promise.resolve({ exists: true, size: 0 }),
+  downloadAsync: () => Promise.resolve({ uri: 'mock:///' }),
+  moveAsync: () => Promise.resolve(),
+  copyAsync: () => Promise.resolve(),
+  makeDirectoryAsync: () => Promise.resolve(),
+  readDirectoryAsync: () => Promise.resolve([]),
+  isAvailableAsync: () => Promise.resolve(false),
+};

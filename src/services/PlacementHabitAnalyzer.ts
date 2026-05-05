@@ -1,4 +1,23 @@
 /**
+ * PlacementHabitAnalyzer — Analyses phone placement habits and suggests the optimal setup
+ *
+ * Responsible for:
+ * - Tracking performance of each placement combo across nap sessions
+ * - Updating rolling average latency, wake rating, accuracy, and comfort
+ * - Computing a composite performance score (0-100) for each combo
+ * - Storing the best recommendation so HomeScreen can display it without recomputing
+ * - Rebuilding all data from sessions after a backup import
+ *
+ * Used by:
+ * - SessionService: ingest() after each save(), rebuildFromSessions() after import
+ * - HomeScreen: loadRecommendation() every time the tab is focused
+ * - DevToolsScreen: clears habits on reset
+ *
+ * Notes:
+ * - comboKey() sorts the placements array before joining so ['hand','chest'] and
+ *   ['chest','hand'] both produce the same key 'chest+hand'
+ * - MIN_SESSIONS_FOR_RECOMMENDATION = 3: at least 3 sessions needed before making a suggestion
+ *
  * PlacementHabitAnalyzer — P.12
  *
  * AI service that:
@@ -19,6 +38,10 @@
  *   - placement_evaluation.comfortable        (explicit, WakeScreen survey)
  *   - confidence_score    (implicit, from ConfidenceEngine)
  */
+
+// ─────────────────────────────────────────
+// Imports
+// ─────────────────────────────────────────
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type {
@@ -43,7 +66,11 @@ const RECOMMEND_KEY     = '@smart_nap_timer:placement_recommendation';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Canonical sorted key for a placements array */
+/**
+ * Creates a canonical key for a placements array (sort + join)
+ * @param placements - Array of PhonePlacement (e.g. ['hand', 'chest'])
+ * @returns Key like 'chest+hand' (sorted to ensure consistency)
+ */
 export function comboKey(placements: PhonePlacement[]): PlacementComboKey {
   return [...placements].sort().join('+');
 }
@@ -76,6 +103,10 @@ class PlacementHabitAnalyzer {
 
   // ── Storage ──────────────────────────────────────────────────────────────
 
+  /**
+   * Reads all placement habits from AsyncStorage
+   * @returns Record keyed by comboKey, empty if no data exists yet
+   */
   async loadHabits(): Promise<Record<PlacementComboKey, PlacementHabit>> {
     try {
       const raw = await AsyncStorage.getItem(HABITS_KEY);
@@ -89,6 +120,10 @@ class PlacementHabitAnalyzer {
     await AsyncStorage.setItem(HABITS_KEY, JSON.stringify(habits));
   }
 
+  /**
+   * Reads the stored recommendation (does not recompute)
+   * @returns PlacementRecommendation or null if insufficient data
+   */
   async loadRecommendation(): Promise<PlacementRecommendation | null> {
     try {
       const raw = await AsyncStorage.getItem(RECOMMEND_KEY);
@@ -226,6 +261,10 @@ class PlacementHabitAnalyzer {
   /**
    * Force-rebuild recommendation from stored sessions.
    * Call after bulk imports or resets.
+   */
+  /**
+   * Rebuilds all habit data from a sessions array (used after backup import)
+   * @param sessions - All sessions merged into the store
    */
   async rebuildFromSessions(sessions: NapSession[]): Promise<void> {
     // Reset habits and re-ingest all sessions in order

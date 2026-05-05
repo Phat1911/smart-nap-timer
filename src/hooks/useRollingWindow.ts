@@ -1,4 +1,20 @@
 /**
+ * useRollingWindow — Hook to manage a 5-minute rolling window for sensor data
+ *
+ * Responsible for:
+ * - Maintaining and pruning MotionSample + MicSample within a 5-minute window
+ * - Checking the stillness ratio >= 95% in the window
+ * - Tolerating brief movement < 30s (wiggle tolerance)
+ * - Resetting the entire window when movement is sustained >= 30s
+ *
+ * Used by:
+ * - useSleepDetection: addMotion(), addMic() per sample, getSnapshot() per evaluation
+ *
+ * Notes:
+ * - All state uses useRef (not useState) to avoid re-renders on each new sample
+ *   (sensors emit at 2 Hz = 120 times/min — re-rendering per sample would lag the UI)
+ * - getSnapshot() is safe to call from setInterval outside the component lifecycle
+ *
  * Tasks 2.6 / 2.7 / 2.8 — useRollingWindow
  *
  * Maintains a 5-minute rolling window of MotionSample + MicSample data.
@@ -22,6 +38,10 @@
  *   • getSnapshot() is called by useSleepDetection's setInterval to feed
  *     the ConfidenceEngine at a controlled rate.
  */
+
+// ─────────────────────────────────────────
+// Imports
+// ─────────────────────────────────────────
 
 import { useRef, useCallback } from 'react';
 import { MotionSample } from '../services/MotionService';
@@ -53,6 +73,10 @@ export interface RollingWindowHandle {
 
 // ── Hook ─────────────────────────────────────────────────────────────────────
 
+/**
+ * Hook that creates and manages the sensor rolling window — zero re-renders per sample tick
+ * @returns RollingWindowHandle with addMotion, addMic, getSnapshot, reset
+ */
 export function useRollingWindow(): RollingWindowHandle {
   const motionRef        = useRef<MotionSample[]>([]);
   const micRef           = useRef<MicSample[]>([]);

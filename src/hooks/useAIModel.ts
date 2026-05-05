@@ -1,4 +1,21 @@
 /**
+ * useAIModel — Hook to train and use an AI model for predicting sleep latency
+ *
+ * Responsible for:
+ * - Activating AI after enough AI_ACTIVATION_SESSION (5) sessions with ratings
+ * - Reusing persisted weights if trained_on_sessions matches (avoids retraining on every mount)
+ * - Predicting latency for the current context (hour, day of week, previous latency)
+ * - Exposing retrain() so the caller can force a retrain after a new session
+ *
+ * Used by:
+ * - HomeScreen: isAIActive, predictedLatency, confidence for the AI badge display
+ * - useDurationSuggestion: sessionsToTrainingRows() helper imported directly
+ *
+ * Notes:
+ * - Only uses sessions with wake_rating != null as training data
+ *   (unrated sessions lack ground truth for training)
+ * - prev_latency = latency of the previous session (not the current session)
+ *
  * Task 4.3 — AI model hook
  *
  * On mount:
@@ -9,6 +26,10 @@
  *
  * Exposes: isPredicting, predictedLatency, confidence, isAIActive
  */
+// ─────────────────────────────────────────
+// Imports
+// ─────────────────────────────────────────
+
 import { useState, useEffect, useCallback } from 'react';
 import { sessionService } from '../services/SessionService';
 import { aiModelService } from '../services/AIModelService';
@@ -16,6 +37,10 @@ import { LinearRegression } from '../services/LinearRegression';
 import { ADAPTIVE } from '../constants/config';
 import type { NapSession } from '../models/Session';
 import type { TrainingRow, PredictInput } from '../services/LinearRegression';
+
+// ─────────────────────────────────────────
+// Types / Interfaces
+// ─────────────────────────────────────────
 
 export interface AIModelResult {
   isPredicting: boolean;
@@ -28,6 +53,11 @@ export interface AIModelResult {
 
 // ── Feature extraction (Task 4.2) ────────────────────────────────────────────
 
+/**
+ * Converts sessions to training rows for LinearRegression
+ * @param sessions - NapSession history (only sessions with wake_rating are kept)
+ * @returns Array of TrainingRow with prev_latency from the previous session
+ */
 export function sessionsToTrainingRows(sessions: NapSession[]): TrainingRow[] {
   return sessions
     .filter((s) => s.wake_rating !== null)
@@ -43,6 +73,10 @@ export function sessionsToTrainingRows(sessions: NapSession[]): TrainingRow[] {
 
 // ── Hook ─────────────────────────────────────────────────────────────────────
 
+/**
+ * AI model hook — trains LinearRegression from session history and predicts latency
+ * @returns isPredicting, predictedLatency, confidence, isAIActive, retrain()
+ */
 export function useAIModel(): AIModelResult {
   const [result, setResult] = useState<Omit<AIModelResult, 'retrain'>>({
     isPredicting: false,

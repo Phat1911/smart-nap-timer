@@ -1,4 +1,20 @@
 /**
+ * PermissionDeniedCard.tsx — Card shown and guides the user when required permissions are denied
+ *
+ * Responsible for:
+ * - Displaying the list of missing permissions (microphone and/or notifications)
+ * - Providing an "Open Settings" button to navigate to device Settings
+ * - Showing a "Continue without mic" option when only mic is denied (notifications OK)
+ *
+ * Used by:
+ * - MonitoringScreen: shown when usePermissions() returns micDenied or notifDenied
+ *
+ * Notes:
+ * - iOS: Linking.openURL('app-settings:') to open the correct app Settings page
+ * - Android: Linking.openSettings() — equivalent on Android
+ * - "Continue without mic" only shown when micDenied=true AND notifDenied=false
+ *   (cannot nap without alarm — notifications are required)
+ *
  * Task 2.16 — PermissionDeniedCard
  *
  * Shown in MonitoringScreen when one or more required permissions are denied.
@@ -7,6 +23,10 @@
  *   • "Continue without mic" (optional) — lets the user proceed with accel-only
  *     detection when the microphone is denied but notifications are granted
  */
+
+// ─────────────────────────────────────────
+// Imports
+// ─────────────────────────────────────────
 
 import React from 'react';
 import {
@@ -18,7 +38,6 @@ import {
   Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../../constants';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -32,6 +51,13 @@ export interface PermissionDeniedCardProps {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
+/**
+ * Card displayed when permissions are denied, guiding the user to fix them
+ * @param micDenied - true if microphone permission is denied
+ * @param notifDenied - true if notifications permission is denied
+ * @param onContinueWithoutMic - Callback when the user chooses to continue with motion-only detection (no mic)
+ * @returns Card UI with the list of missing permissions and action buttons
+ */
 export function PermissionDeniedCard({
   micDenied,
   notifDenied,
@@ -51,7 +77,7 @@ export function PermissionDeniedCard({
     <View style={[styles.card, { marginTop: insets.top + 24 }]}>
       {/* Icon */}
       <View style={styles.iconBox}>
-        <MaterialCommunityIcons name="lock-outline" size={28} color={Colors.error} />
+        <Text style={{ fontSize: 28 }}>🔒</Text>
       </View>
 
       {/* Title */}
@@ -64,13 +90,13 @@ export function PermissionDeniedCard({
       <View style={styles.list}>
         {micDenied && (
           <View style={styles.listItem}>
-            <MaterialCommunityIcons name="microphone-off" size={16} color={Colors.error} />
+            <Text style={{ fontSize: 16 }}>🎤</Text>
             <Text style={styles.listText}>Microphone — breathing detection</Text>
           </View>
         )}
         {notifDenied && (
           <View style={styles.listItem}>
-            <MaterialCommunityIcons name="bell-off-outline" size={16} color={Colors.error} />
+            <Text style={{ fontSize: 16 }}>🔕</Text>
             <Text style={styles.listText}>Notifications — wake alarm</Text>
           </View>
         )}
@@ -78,7 +104,7 @@ export function PermissionDeniedCard({
 
       {/* Open Settings */}
       <TouchableOpacity style={styles.settingsBtn} onPress={openSettings} activeOpacity={0.8}>
-        <MaterialCommunityIcons name="cog-outline" size={16} color={Colors.on_primary} />
+        <Text style={{ fontSize: 16 }}>⚙️</Text>
         <Text style={styles.settingsBtnText}>Open Settings</Text>
       </TouchableOpacity>
 

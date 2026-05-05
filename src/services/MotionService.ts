@@ -1,5 +1,32 @@
+/**
+ * MotionService — Manages accelerometer and gyroscope sensor data
+ *
+ * Responsible for:
+ * - Subscribing to Accelerometer + Gyroscope from expo-sensors
+ * - Computing the variance of the magnitude vector (√x²+y²+z²) over a 60-second window
+ * - Emitting a MotionSample every SAMPLE_INTERVAL_MS for the hook and engine to process
+ * - Cleaning up subscriptions and memory on stop()
+ *
+ * Used by:
+ * - useSleepDetection: start() when monitoring begins, stop() on unmount
+ * - ConfidenceEngine: receives MotionSample[] to compute accelScore and gyroScore
+ *
+ * Notes:
+ * - Accelerometer and Gyroscope do not require runtime permissions on Android/iOS
+ *   (declared in AndroidManifest via app.json; iOS grants automatically)
+ * - Keeps at most 120 readings (~60 seconds at 2 Hz) to avoid memory leaks
+ */
+
+// ─────────────────────────────────────────
+// Imports
+// ─────────────────────────────────────────
+
 import { Accelerometer, Gyroscope } from 'expo-sensors';
 import { DETECTION } from '../constants/config';
+
+// ─────────────────────────────────────────
+// Types / Interfaces
+// ─────────────────────────────────────────
 
 export interface MotionSample {
   accelVariance: number;
@@ -8,6 +35,10 @@ export interface MotionSample {
 }
 
 type MotionCallback = (sample: MotionSample) => void;
+
+// ─────────────────────────────────────────
+// Class Definition
+// ─────────────────────────────────────────
 
 class MotionService {
   private accelSubscription: ReturnType<typeof Accelerometer.addListener> | null = null;
@@ -19,6 +50,10 @@ class MotionService {
   private callback: MotionCallback | null = null;
   private intervalId: ReturnType<typeof setInterval> | null = null;
 
+  /**
+   * Starts collecting sensor data and emits variance every SAMPLE_INTERVAL_MS
+   * @param callback - Function that receives a MotionSample each time new data arrives
+   */
   start(callback: MotionCallback): void {
     this.callback = callback;
 
@@ -44,6 +79,9 @@ class MotionService {
     }, DETECTION.SAMPLE_INTERVAL_MS);
   }
 
+  /**
+   * Stops all sensor subscriptions and clears buffered data
+   */
   stop(): void {
     this.accelSubscription?.remove();
     this.gyroSubscription?.remove();
@@ -69,6 +107,10 @@ class MotionService {
     return variance;
   }
 
+  /**
+   * Checks whether the device supports both Accelerometer and Gyroscope
+   * @returns true if both sensors are available
+   */
   async isAvailable(): Promise<boolean> {
     const [accelAvailable, gyroAvailable] = await Promise.all([
       Accelerometer.isAvailableAsync(),
@@ -77,5 +119,9 @@ class MotionService {
     return accelAvailable && gyroAvailable;
   }
 }
+
+// ─────────────────────────────────────────
+// Exports
+// ─────────────────────────────────────────
 
 export const motionService = new MotionService();

@@ -1,4 +1,21 @@
 /**
+ * DndService — Controls Do Not Disturb mode on Android
+ *
+ * Responsible for:
+ * - Enabling DND (INTERRUPTION_FILTER_NONE) when a nap begins
+ * - Disabling DND (INTERRUPTION_FILTER_ALL) when a nap ends
+ * - Requesting ACCESS_NOTIFICATION_POLICY permission if not already granted
+ * - All methods are no-ops on iOS (iOS uses a different Focus API)
+ *
+ * Used by:
+ * - MonitoringScreen: enable() on mount, disable() on unmount
+ * - MonitoringScreen: isPermissionGranted() and requestPermission() for the DND modal
+ *
+ * Notes:
+ * - DndModule is injected by the withAndroidDnd config plugin — undefined in Expo Go
+ * - All methods degrade gracefully when the module is unavailable (no crashes)
+ * - MANAGE_NOTIFICATIONS permission must be declared in app.json
+ *
  * DndService — Android Do Not Disturb control.
  *
  * Wraps the native DndModule injected by the withAndroidDnd config plugin.
@@ -8,7 +25,15 @@
  * gracefully to avoid crashing in development.
  */
 
+// ─────────────────────────────────────────
+// Imports
+// ─────────────────────────────────────────
+
 import { NativeModules, Platform } from 'react-native';
+
+// ─────────────────────────────────────────
+// Service
+// ─────────────────────────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const { DndModule } = NativeModules as { DndModule?: Record<string, (...args: any[]) => Promise<unknown>> };
@@ -54,5 +79,9 @@ const DndService = {
     await DndModule.disable();
   },
 };
+
+// ─────────────────────────────────────────
+// Exports
+// ─────────────────────────────────────────
 
 export default DndService;

@@ -1,3 +1,17 @@
+/**
+ * index.ts — Barrel export for all Smart Nap Timer custom hooks
+ *
+ * Responsible for:
+ * - Re-exporting all hooks and related types from each module
+ * - Allowing screens/components to import cleanly from a single path
+ *
+ * Used by:
+ * - All screens and services that need to import a hook
+ *
+ * Notes:
+ * - Exports only; contains no logic — add new hooks here after creating their file
+ */
+
 export { useAdaptiveThreshold } from './useAdaptiveThreshold';
 export type { AdaptiveThresholdResult } from './useAdaptiveThreshold';
 

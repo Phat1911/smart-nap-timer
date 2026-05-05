@@ -1,5 +1,24 @@
 /**
- * WakeScreen
+ * WakeScreen — Wake-up screen displaying nap summary and playing alarm
+ *
+ * Responsible for:
+ * - Playing alarm sound with volume ramping from 0.1 → 1.0 over ALARM_RAMP_SECONDS
+ * - Vibrating the device alongside the alarm sound
+ * - Displaying session summary: target time, actual sleep, latency, detection method
+ * - Allowing the user to rate the nap 1-5 stars
+ * - Collecting phone placement evaluation (P.12)
+ * - Snooze: stops alarm, counts down SNOOZE_MINUTES, then restarts automatically
+ * - If nap was insufficient: shows warning and suggests a shorter target (4.9)
+ * - Triggers review prompt after a high-quality nap (7.6)
+ *
+ * Used by:
+ * - AppNavigator: "Wake" screen in the stack
+ * - SleepingScreen / MonitoringScreen: navigates here when the nap time ends
+ *
+ * Notes:
+ * - mountedRef prevents setState after unmount in async callbacks
+ * - handleDoneRef prevents stale closure when registering the TopRight X button
+ * - soundRef stores Audio.Sound so it can be properly stopped/unloaded on unmount
  *
  * Tasks wired here: P.7 / P.8 / 3.8 / 3.15 / 3.16 / 4.9 / 5.6b / P.12
  *
@@ -8,6 +27,10 @@
  * Snooze: in-screen countdown (no navigation back to Monitoring); restarts
  *         alarm when countdown reaches zero.
  */
+
+// ─────────────────────────────────────────
+// Imports
+// ─────────────────────────────────────────
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
@@ -19,18 +42,27 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Audio } from 'expo-av';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { Asset } from 'expo-asset';
+import * as FileSystem from 'expo-file-system/legacy';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Colors } from '../constants';
+import { useLanguage } from '../contexts/LanguageContext';
+import { useTopRight } from '../contexts/TopRightContext';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { SNOOZE_MINUTES, ALARM_RAMP_SECONDS, ALARM_SOUNDS } from '../constants/config';
 import { getAlarmSound } from '../services/SettingsService';
+import { customSoundService } from '../services/CustomSoundService';
+import { maybeRequestReview } from '../services/ReviewService';
 import { sessionService } from '../services/SessionService';
 import { buildSessionSummary, useInsufficientSuggestion } from '../hooks/useSessionSummary';
 import { useTier } from '../hooks/useTier';
 import { NapSession, WakeRating, PlacementEvaluation } from '../models/Session';
 import type { DetectionMethod } from '../models/Session';
+
+// ─────────────────────────────────────────
+// Types / Interfaces
+// ─────────────────────────────────────────
 
 type Nav   = NativeStackNavigationProp<RootStackParamList>;
 type Route = RouteProp<RootStackParamList, 'Wake'>;
@@ -48,17 +80,23 @@ if (!__DEV__) {
   };
 }
 
-const METHOD_LABEL: Record<DetectionMethod, string> = {
-  accelerometer: 'Accelerometer',
-  mic:           'Microphone',
-  combo:         'Accel + Mic',
-  manual_tap:    'Manual tap',
-};
+// ─────────────────────────────────────────
+// Render
+// ─────────────────────────────────────────
 
 export default function WakeScreen() {
+  const { strings: Strings } = useLanguage();
+  const { setButton } = useTopRight();
   const navigation = useNavigation<Nav>();
+
+  const METHOD_LABEL: Record<DetectionMethod, string> = {
+    accelerometer: Strings.monitoring_method_accel,
+    mic:           Strings.monitoring_method_mic,
+    combo:         Strings.monitoring_method_combo,
+    manual_tap:    Strings.monitoring_method_tap,
+  };
   const route      = useRoute<Route>();
-  const { sessionId } = route.params;
+  const { sessionId, fallAsleepTimeout } = route.params;
 
   // ── Session / rating state ────────────────────────────────────────────────
   const [session,        setSession]        = useState<NapSession | null>(null);
@@ -111,10 +149,31 @@ export default function WakeScreen() {
         playsInSilentModeIOS: true,
         staysActiveInBackground: true,
       });
-      const soundId   = await getAlarmSound();
-      const soundEntry = ALARM_SOUNDS.find((s) => s.id === soundId) ?? ALARM_SOUNDS[0];
+      const soundId = await getAlarmSound();
+      let audioSource: { uri: string };
+      if (soundId.startsWith('custom_')) {
+        const custom = await customSoundService.getById(soundId);
+        if (custom) {
+          audioSource = { uri: custom.uri };
+        } else {
+          // Custom sound deleted — fall back to bundled Classic alarm
+          const asset = Asset.fromModule(ALARM_SOUNDS[0].file);
+          const destUri = `${FileSystem.cacheDirectory}alarm_wake.wav`;
+          await FileSystem.downloadAsync(asset.uri, destUri);
+          audioSource = { uri: destUri };
+        }
+      } else {
+        // Bundled asset — require() returns a number; must download to local file
+        // before playing because ExoPlayer cannot stream Metro dev-server URIs.
+        const file = (ALARM_SOUNDS.find((s) => s.id === soundId) ?? ALARM_SOUNDS[0]).file;
+        const asset = Asset.fromModule(file);
+        const ext = asset.name?.split('.').pop() ?? 'wav';
+        const destUri = `${FileSystem.cacheDirectory}alarm_wake.${ext}`;
+        await FileSystem.downloadAsync(asset.uri, destUri);
+        audioSource = { uri: destUri };
+      }
       const { sound } = await Audio.Sound.createAsync(
-        soundEntry.file,
+        audioSource,
         { isLooping: true, volume: 0.1 },
       );
       if (!mountedRef.current) { await sound.unloadAsync(); return; }
@@ -219,9 +278,19 @@ export default function WakeScreen() {
         };
         await sessionService.updatePlacementEvaluation(sessionId, evaluation).catch(() => {});
       }
+      // 7.6 — Review prompt: trigger after a high-quality nap (4-5 stars), once ever.
+      await maybeRequestReview(rating).catch(() => {});
     }
     navigation.navigate('Main');
   }, [session, saved, rating, sessionId, navigation, evalComfortable, evalAccuracy, evalSubmitted, stopAlarm]);
+
+  // Register close button in global top-right overlay; use ref to avoid stale closure
+  const handleDoneRef = useRef(handleDone);
+  useEffect(() => { handleDoneRef.current = handleDone; }, [handleDone]);
+  useEffect(() => {
+    setButton({ type: 'icon', iconName: 'close', iconColor: Colors.primary, onPress: () => handleDoneRef.current() });
+    return () => setButton(null);
+  }, []);
 
   // ── Snooze actions ────────────────────────────────────────────────────────
   function handleSnooze() {
@@ -249,31 +318,36 @@ export default function WakeScreen() {
     <SafeAreaView style={styles.root} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Restored</Text>
-        <TouchableOpacity onPress={handleDone} activeOpacity={0.7}>
-          <MaterialCommunityIcons name="close" size={22} color={Colors.primary} />
-        </TouchableOpacity>
+        <Text style={styles.headerTitle}>{Strings.wake_restored_title}</Text>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
         {/* Hero */}
         <View style={styles.hero}>
-          <Text style={styles.heroTitle}>Time to Wake Up</Text>
+          <Text style={styles.heroTitle}>{Strings.wake_title}</Text>
           <Text style={styles.heroTime}>{currentTime}</Text>
-          <Text style={styles.heroSub}>How do you feel?</Text>
+          <Text style={styles.heroSub}>{Strings.wake_rate_prompt}</Text>
         </View>
+
+        {/* Feature 1 — Fall-asleep timeout banner */}
+        {fallAsleepTimeout && (
+          <View style={styles.timeoutCard}>
+            <Text style={{ fontSize: 22 }}>⏰</Text>
+            <View style={styles.timeoutText}>
+              <Text style={styles.timeoutTitle}>{Strings.wake_fall_asleep_timeout_title}</Text>
+              <Text style={styles.timeoutBody}>{Strings.wake_fall_asleep_timeout_body}</Text>
+            </View>
+          </View>
+        )}
 
         {/* Star Rating */}
         <View style={styles.ratingRow}>
           <View style={styles.stars}>
             {([1, 2, 3, 4, 5] as WakeRating[]).map((s) => (
               <TouchableOpacity key={s} onPress={() => setRating(s)} activeOpacity={0.7}>
-                <MaterialCommunityIcons
-                  name={s <= rating ? 'star' : 'star-outline'}
-                  size={36}
-                  color={s <= rating ? Colors.primary : Colors.outline_variant}
-                  style={s <= rating ? styles.starGlow : undefined}
-                />
+                <Text style={[{ fontSize: 32 }, s <= rating ? styles.starGlow : undefined]}>
+                  {s <= rating ? '⭐' : '☆'}
+                </Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -285,21 +359,21 @@ export default function WakeScreen() {
           <View style={styles.cardGlow} pointerEvents="none" />
           <View style={styles.summaryGrid}>
             <View style={styles.summaryItem}>
-              <Text style={styles.summaryItemLabel}>Target</Text>
+              <Text style={styles.summaryItemLabel}>{Strings.wake_target}</Text>
               <Text style={styles.summaryItemValue}>{target} min</Text>
             </View>
             <View style={styles.summaryItem}>
-              <Text style={styles.summaryItemLabel}>Actual sleep</Text>
+              <Text style={styles.summaryItemLabel}>{Strings.wake_actual}</Text>
               <Text style={[styles.summaryItemValue, { color: Colors.primary }]}>{actual} min</Text>
             </View>
             <View style={styles.summaryItem}>
-              <Text style={styles.summaryItemLabel}>Time to fall asleep</Text>
+              <Text style={styles.summaryItemLabel}>{Strings.wake_latency}</Text>
               <Text style={styles.summaryItemValue}>{latency} min</Text>
             </View>
             <View style={styles.summaryItem}>
-              <Text style={styles.summaryItemLabel}>Detected via</Text>
+              <Text style={styles.summaryItemLabel}>{Strings.wake_method}</Text>
               <View style={styles.detectedRow}>
-                <MaterialCommunityIcons name="access-point" size={14} color={Colors.on_surface} />
+                <Text style={{ fontSize: 14 }}>📶</Text>
                 <Text style={styles.summaryItemValueSm}>{METHOD_LABEL[method]}</Text>
               </View>
             </View>
@@ -311,34 +385,34 @@ export default function WakeScreen() {
           limits.fullReportEnabled ? (
             <View style={styles.warningCard}>
               <View style={styles.warningIconBox}>
-                <MaterialCommunityIcons name="alert" size={20} color={Colors.on_error_container} />
+                <Text style={{ fontSize: 20 }}>⚠️</Text>
               </View>
               <View style={styles.warningText}>
-                <Text style={styles.warningTitle}>You didn't get enough sleep</Text>
+                <Text style={styles.warningTitle}>{Strings.wake_insufficient_title}</Text>
                 <Text style={styles.warningBody}>
-                  You got {actual} min (target: {target} min). Missing: {summary.missingMinutes} min.
+                  {Strings.wake_insufficient_body(actual, target)}
                 </Text>
                 <View style={styles.warnProgress}>
                   <View style={[styles.warnProgressFill, { width: `${summary.progressPercent}%` as any }]} />
                 </View>
-                <Text style={styles.warnReasons}>Possible reasons: woke earlier than planned, try a quieter environment.</Text>
+                <Text style={styles.warnReasons}>{Strings.wake_possible_reasons}</Text>
               </View>
             </View>
           ) : (
             <TouchableOpacity
               style={styles.warningCard}
-              onPress={() => navigation.navigate('Paywall', { reason: 'Upgrade to Pro for full sleep analysis' })}
+              onPress={() => navigation.navigate('Paywall', { reason: Strings.wake_upgrade_hint })}
               activeOpacity={0.8}
             >
               <View style={styles.warningIconBox}>
-                <MaterialCommunityIcons name="alert" size={20} color={Colors.on_error_container} />
+                <Text style={{ fontSize: 20 }}>⚠️</Text>
               </View>
               <View style={styles.warningText}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text style={styles.warningTitle}>You didn't sleep enough.</Text>
-                  <MaterialCommunityIcons name="crown" size={14} color={Colors.primary} />
+                  <Text style={styles.warningTitle}>{Strings.wake_insufficient_title}</Text>
+                  <Text style={{ fontSize: 14 }}>👑</Text>
                 </View>
-                <Text style={styles.warningBody}>Upgrade to Pro for full sleep analysis.</Text>
+                <Text style={styles.warningBody}>{Strings.wake_upgrade_hint}</Text>
               </View>
             </TouchableOpacity>
           )
@@ -348,13 +422,12 @@ export default function WakeScreen() {
         {shouldSuggestShorterTarget && (
           <View style={styles.suggestionCard}>
             <View style={styles.suggestionIconBox}>
-              <MaterialCommunityIcons name="lightbulb-outline" size={20} color={Colors.primary} />
+              <Text style={{ fontSize: 20 }}>💡</Text>
             </View>
             <View style={styles.suggestionText}>
-              <Text style={styles.suggestionTitle}>Try a shorter target</Text>
+              <Text style={styles.suggestionTitle}>{Strings.wake_suggestion_title}</Text>
               <Text style={styles.suggestionBody}>
-                Your last few naps came up short. Consider a {suggestedTargetMinutes}-minute
-                target next time — it better matches your recent sleep patterns.
+                {Strings.wake_suggestion_body(suggestedTargetMinutes)}
               </Text>
             </View>
           </View>
@@ -364,11 +437,11 @@ export default function WakeScreen() {
         {session && (
           <View style={styles.evalCard}>
             <View style={styles.evalHeader}>
-              <MaterialCommunityIcons name="cellphone-settings" size={18} color={Colors.primary} />
-              <Text style={styles.evalTitle}>How was your placement?</Text>
+              <Text style={{ fontSize: 18 }}>📱</Text>
+              <Text style={styles.evalTitle}>{Strings.wake_placement_eval_title}</Text>
             </View>
 
-            <Text style={styles.evalQuestion}>Was it comfortable?</Text>
+            <Text style={styles.evalQuestion}>{Strings.wake_placement_eval_comfort}</Text>
             <View style={styles.evalRow}>
               {([true, false] as const).map((val) => (
                 <TouchableOpacity
@@ -378,13 +451,13 @@ export default function WakeScreen() {
                   activeOpacity={0.8}
                 >
                   <Text style={[styles.evalChipText, evalComfortable === val && styles.evalChipTextActive]}>
-                    {val ? 'Yes' : 'No'}
+                    {val ? Strings.wake_eval_yes : Strings.wake_eval_no}
                   </Text>
                 </TouchableOpacity>
               ))}
             </View>
 
-            <Text style={styles.evalQuestion}>Did it detect sleep accurately?</Text>
+            <Text style={styles.evalQuestion}>{Strings.wake_placement_eval_accuracy}</Text>
             <View style={styles.evalRow}>
               {(['good', 'late', 'too_early', 'unknown'] as const).map((val) => (
                 <TouchableOpacity
@@ -394,7 +467,7 @@ export default function WakeScreen() {
                   activeOpacity={0.8}
                 >
                   <Text style={[styles.evalChipText, evalAccuracy === val && styles.evalChipTextActive]}>
-                    {val === 'good' ? 'Yes' : val === 'late' ? 'Too late' : val === 'too_early' ? 'Too early' : 'Not sure'}
+                    {val === 'good' ? Strings.wake_eval_yes : val === 'late' ? Strings.wake_eval_too_late : val === 'too_early' ? Strings.wake_eval_too_early : Strings.wake_eval_not_sure}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -405,7 +478,7 @@ export default function WakeScreen() {
         {/* Quality Score */}
         <View style={styles.qualityCard}>
           <View style={styles.qualityCenter}>
-            <Text style={styles.qualityLabel}>Quality Score</Text>
+            <Text style={styles.qualityLabel}>{Strings.wake_quality_score}</Text>
             <Text style={styles.qualityValue}>{qualityPct}%</Text>
           </View>
         </View>
@@ -415,18 +488,18 @@ export default function WakeScreen() {
       <View style={styles.footer}>
         {snoozeSecondsLeft !== null ? (
           <>
-            <Text style={styles.snoozeCountdownText}>Snooze: {snoozeStr}</Text>
+            <Text style={styles.snoozeCountdownText}>{Strings.wake_snooze_countdown(snoozeStr)}</Text>
             <TouchableOpacity style={styles.cancelSnoozeBtn} onPress={handleCancelSnooze} activeOpacity={0.85}>
-              <Text style={styles.cancelSnoozeBtnText}>Cancel Snooze</Text>
+              <Text style={styles.cancelSnoozeBtnText}>{Strings.wake_cancel_snooze}</Text>
             </TouchableOpacity>
           </>
         ) : (
           <>
             <TouchableOpacity style={styles.doneBtn} onPress={handleDone} activeOpacity={0.85}>
-              <Text style={styles.doneBtnText}>Dismiss</Text>
+              <Text style={styles.doneBtnText}>{Strings.wake_done}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.snoozeBtn} onPress={handleSnooze} activeOpacity={0.85}>
-              <Text style={styles.snoozeBtnText}>Snooze {SNOOZE_MINUTES} min</Text>
+              <Text style={styles.snoozeBtnText}>{Strings.wake_snooze}</Text>
             </TouchableOpacity>
           </>
         )}
@@ -434,6 +507,10 @@ export default function WakeScreen() {
     </SafeAreaView>
   );
 }
+
+// ─────────────────────────────────────────
+// Styles
+// ─────────────────────────────────────────
 
 const styles = StyleSheet.create({
   root:   { flex: 1, backgroundColor: Colors.bg_base },
@@ -517,6 +594,17 @@ const styles = StyleSheet.create({
   },
   cancelSnoozeBtn:     { paddingVertical: 18, borderRadius: 99, alignItems: 'center', borderWidth: 1, borderColor: Colors.outline_variant },
   cancelSnoozeBtnText: { color: Colors.on_surface, fontSize: 15, fontWeight: '600' },
+
+  // Feature 1 — fall-asleep timeout banner
+  timeoutCard: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 14,
+    backgroundColor: 'rgba(168,164,255,0.1)',
+    borderWidth: 1, borderColor: 'rgba(168,164,255,0.3)',
+    borderRadius: 14, padding: 18, marginBottom: 16,
+  },
+  timeoutText:  { flex: 1, gap: 4 },
+  timeoutTitle: { fontSize: 14, fontWeight: '700', color: Colors.primary },
+  timeoutBody:  { fontSize: 12, color: Colors.on_surface_variant, lineHeight: 18 },
 
   // P.12 -- Placement evaluation card
   evalCard:          { backgroundColor: Colors.surface_container, borderRadius: 12, padding: 20, marginBottom: 16, gap: 10, borderWidth: 1, borderColor: 'rgba(168,164,255,0.15)' },

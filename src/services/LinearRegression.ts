@@ -1,4 +1,22 @@
 /**
+ * LinearRegression — Pure TypeScript linear regression model for predicting sleep latency
+ *
+ * Responsible for:
+ * - Training the model from session history (using normal equation: β = (XᵀX)⁻¹ Xᵀy)
+ * - Predicting expected sleep onset time for the current context (hour, day, previous latency)
+ * - Computing R² (0-100) as the model confidence metric
+ * - Serializing/deserializing weights for storage in AIModelService
+ *
+ * Used by:
+ * - useAIModel: creates an instance, trains, and predicts
+ * - useDurationSuggestion: creates a per-bucket instance for duration comparison
+ *
+ * Notes:
+ * - No external libraries (tensorflow, ml5…) to keep bundle size small
+ * - Gaussian elimination with partial pivoting to avoid division by zero
+ * - All features are normalised to 0-1 before training/prediction
+ *   to prevent scale domination (hour 0-23 >> wake_rating 1-5)
+ *
  * Tasks 4.1 + 4.2 — Pure TypeScript linear regression (no external libraries)
  *
  * Inputs (normalised to 0-1 before training/prediction):
@@ -8,6 +26,10 @@
  * Normal-equation solution: β = (XᵀX)⁻¹ Xᵀy
  * Confidence exposed as R² (0-100 integer).
  */
+// ─────────────────────────────────────────
+// Imports
+// ─────────────────────────────────────────
+
 import { AIModelWeights } from '../models/Session';
 
 // ── Public types ─────────────────────────────────────────────────────────────
@@ -111,6 +133,10 @@ export class LinearRegression {
 
   // ── Training ────────────────────────────────────────────────────────────────
 
+  /**
+   * Trains the model from historical session data
+   * @param data - Array of TrainingRow (at least 2 rows required to train)
+   */
   train(data: TrainingRow[]): void {
     if (data.length < 2) return;
 
@@ -151,6 +177,11 @@ export class LinearRegression {
 
   // ── Prediction ──────────────────────────────────────────────────────────────
 
+  /**
+   * Predicts sleep onset latency (minutes) for the given context
+   * @param input - Current context: hour, day, previous session latency, rating
+   * @returns Predicted latency >= 1 minute (clamped to avoid meaningless negative values)
+   */
   predict(input: PredictInput): number {
     const features = [1, ...normaliseFeatures(input)];
     const raw = features.reduce((sum, val, i) => sum + val * this.w[i], 0);
@@ -159,6 +190,10 @@ export class LinearRegression {
 
   // ── Weight serialisation ────────────────────────────────────────────────────
 
+  /**
+   * Exports the current weights for storage in AIModelService
+   * @returns AIModelWeights containing the intercept, coefficients, and metadata
+   */
   getWeights(): AIModelWeights {
     return {
       intercept: this.w[0] ?? 0,
@@ -171,6 +206,10 @@ export class LinearRegression {
     };
   }
 
+  /**
+   * Loads saved weights to continue predicting without retraining
+   * @param w - AIModelWeights from AIModelService.loadWeights()
+   */
   loadWeights(w: AIModelWeights): void {
     this.w = [
       w.intercept,

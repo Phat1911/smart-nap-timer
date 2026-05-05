@@ -1,4 +1,22 @@
 /**
+ * usePermissions — Hook to check and request permissions required for sleep detection
+ *
+ * Responsible for:
+ * - Requesting microphone permission (expo-av) for MicService breathing detection
+ * - Requesting notification permission (expo-notifications) for AlarmService
+ * - Automatically requesting permissions on mount; exposes request() to call manually
+ * - Providing micStatus, notifStatus, allGranted, requesting state for the UI
+ *
+ * Used by:
+ * - MonitoringScreen: checks allGranted before starting sleep detection
+ * - PermissionDeniedCard: displayed when one or more permissions are denied
+ *
+ * Notes:
+ * - Motion sensors (Accelerometer/Gyroscope) do NOT require a runtime permission prompt
+ *   (declared in AndroidManifest via app.json; iOS grants automatically when the sensor is read)
+ * - expo-notifications is mocked in __DEV__ to avoid crashes on Expo Go (SDK 53+)
+ * - Android 13+ requires POST_NOTIFICATIONS; older Android auto-resolves to 'granted' (no prompt needed)
+ *
  * Tasks 2.11–2.14 — usePermissions
  *
  * Checks and requests the permissions required for sleep detection:
@@ -19,6 +37,10 @@
  *   const { micGranted, notifGranted, allGranted, requesting, request } =
  *     usePermissions();
  */
+
+// ─────────────────────────────────────────
+// Imports
+// ─────────────────────────────────────────
 
 import { useState, useEffect, useCallback } from 'react';
 import { Audio } from 'expo-av';
@@ -47,6 +69,10 @@ export interface PermissionsState {
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
+/**
+ * Hook to check and request microphone + notification permissions for the app
+ * @returns micStatus, notifStatus, allGranted (both granted), requesting (in-flight), request() (re-request)
+ */
 export function usePermissions(): PermissionsState {
   const [micStatus,   setMicStatus]   = useState<PermissionStatus>('undetermined');
   const [notifStatus, setNotifStatus] = useState<PermissionStatus>('undetermined');

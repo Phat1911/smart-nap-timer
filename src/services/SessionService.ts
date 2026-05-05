@@ -1,8 +1,39 @@
+/**
+ * SessionService — Manages storage and retrieval of nap session data
+ *
+ * Responsible for:
+ * - Saving and reading NapSession from AsyncStorage
+ * - Computing aggregated statistics (SessionStats) from session history
+ * - Updating the adaptive threshold per-placement after each session (P.9)
+ * - Updating PlacementHabitAnalyzer after each session (P.12)
+ * - Exporting JSON and merging imports from backup files
+ * - Resetting all data (used by DevTools)
+ *
+ * Used by:
+ * - SleepingScreen: save() when nap time runs out
+ * - MonitoringScreen: save() on timeout or if the user doesn't fall asleep
+ * - WakeScreen: loadAll() to get sessions, updatePlacementEvaluation()
+ * - useDashboardData, useAIModel, useAdaptiveThreshold, useStreak...
+ *
+ * Notes:
+ * - Each placement has its own threshold key to avoid cross-contamination (P.9)
+ * - save() automatically normalizes the placements array (ensures it is non-empty)
+ * - Adaptive threshold uses EMA: 70% weight for previous avg, 30% for new session
+ */
+
+// ─────────────────────────────────────────
+// Imports
+// ─────────────────────────────────────────
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NapSession, SessionStats, AdaptiveThreshold } from '../models/Session';
 import { placementHabitAnalyzer } from './PlacementHabitAnalyzer';
 import { TIME_OF_DAY, ADAPTIVE, INSUFFICIENT, DETECTION, DEFAULT_PLACEMENT } from '../constants/config';
 import type { TimeOfDay, PhonePlacement } from '../models/Session';
+
+// ─────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────
 
 const SESSIONS_KEY = '@smart_nap_timer:sessions';
 /** P.9 — one threshold key per placement so buckets don't cross-contaminate */
@@ -10,9 +41,17 @@ const thresholdKey = (placement: PhonePlacement) =>
   `@smart_nap_timer:threshold_${placement}`;
 const AI_WEIGHTS_KEY = '@smart_nap_timer:ai_weights';
 
+// ─────────────────────────────────────────
+// Class Definition
+// ─────────────────────────────────────────
+
 class SessionService {
   // ── Read ──────────────────────────────────────────────────────────────────
 
+  /**
+   * Reads all session history from AsyncStorage
+   * @returns Array of NapSession, empty if no data exists yet
+   */
   async loadAll(): Promise<NapSession[]> {
     try {
       const raw = await AsyncStorage.getItem(SESSIONS_KEY);
@@ -24,6 +63,10 @@ class SessionService {
 
   // ── Write ─────────────────────────────────────────────────────────────────
 
+  /**
+   * Saves a new nap session and updates the adaptive threshold and PlacementHabitAnalyzer
+   * @param session - Nap session data to save
+   */
   async save(session: NapSession): Promise<void> {
     // Ensure placements array is always populated
     const normalised: NapSession = {
@@ -42,6 +85,10 @@ class SessionService {
 
   // ── Stats ─────────────────────────────────────────────────────────────────
 
+  /**
+   * Computes and returns aggregated statistics from the full session history
+   * @returns SessionStats with avg latency, avg sleep, avg rating and insufficient streak
+   */
   async getStats(): Promise<SessionStats> {
     const sessions = await this.loadAll();
     if (sessions.length === 0) {
@@ -128,6 +175,11 @@ class SessionService {
 
   // ── Utils ─────────────────────────────────────────────────────────────────
 
+  /**
+   * Maps the current hour to a TimeOfDay bucket (night/morning/afternoon/evening)
+   * @param hour - Current hour (0-23)
+   * @returns The corresponding time-of-day bucket
+   */
   getTimeOfDay(hour: number): TimeOfDay {
     if (hour >= TIME_OF_DAY.night.start && hour < TIME_OF_DAY.night.end)
       return 'night';
@@ -138,6 +190,12 @@ class SessionService {
     return 'evening';
   }
 
+  /**
+   * Checks whether a nap session should be considered insufficient
+   * @param actualMinutes - Actual sleep time (minutes)
+   * @param targetMinutes - Target sleep time (minutes)
+   * @returns true if actualMinutes < targetMinutes * INSUFFICIENT.THRESHOLD_RATIO (0.85)
+   */
   isInsufficient(actualMinutes: number, targetMinutes: number): boolean {
     return actualMinutes < targetMinutes * INSUFFICIENT.THRESHOLD_RATIO;
   }
@@ -161,6 +219,10 @@ class SessionService {
     await placementHabitAnalyzer.rebuildFromSessions(all).catch(() => {});
   }
 
+  /**
+   * Deletes all data: sessions, AI weights, placement habits and all thresholds
+   * Only called from DevTools
+   */
   async reset(): Promise<void> {
     const placementKeys: PhonePlacement[] = ['mattress', 'hand', 'chest', 'pocket'];
     await AsyncStorage.multiRemove([
@@ -172,10 +234,33 @@ class SessionService {
     ]);
   }
 
+  /**
+   * Exports all sessions as a pretty-printed JSON string (2-space indent)
+   * @returns JSON string of the NapSession array
+   */
   async exportJSON(): Promise<string> {
     const sessions = await this.loadAll();
     return JSON.stringify(sessions, null, 2);
   }
+
+  /**
+   * Merges sessions from an imported file into existing data, skipping duplicates
+   * @param incoming - Data array from a JSON backup file
+   * @returns Number of sessions imported and skipped (due to duplicates)
+   */
+  async mergeImported(incoming: unknown[]): Promise<{ imported: number; skipped: number }> {
+    const existing = await this.loadAll();
+    const existingIds = new Set(existing.map((s) => s.session_id));
+    const valid = (incoming as NapSession[]).filter(
+      (s) => s.session_id && !existingIds.has(s.session_id),
+    );
+    await AsyncStorage.setItem(SESSIONS_KEY, JSON.stringify([...existing, ...valid]));
+    return { imported: valid.length, skipped: incoming.length - valid.length };
+  }
 }
+
+// ─────────────────────────────────────────
+// Exports
+// ─────────────────────────────────────────
 
 export const sessionService = new SessionService();

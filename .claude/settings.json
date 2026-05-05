@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(apt-get install:*)",
+      "Read(//usr/**)",
+      "Read(//usr/lib/**)",
+      "Bash(cmd.exe /c \"cd /d C:\\\\Users\\\\HONG PHAT && echo %USERNAME%\")"
+    ]
+  }
+}

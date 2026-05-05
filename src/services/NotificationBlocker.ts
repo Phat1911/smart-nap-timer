@@ -1,4 +1,20 @@
 /**
+ * NotificationBlocker — Suppresses notifications from other apps during a nap
+ *
+ * Responsible for:
+ * - Overriding the notification handler to hide all foreground notifications while napping
+ * - Restoring the normal notification handler when the nap ends
+ *
+ * Used by:
+ * - MonitoringScreen: block() on mount, unblock() on unmount
+ * - useSleepDetection: block() when monitoring starts, unblock() on cleanup
+ *
+ * Notes:
+ * - expo-notifications is NOT supported in Expo Go — mocked in __DEV__
+ * - Only foreground notifications are blocked; background notifications are still
+ *   delivered to the notification centre but do not show a popup
+ * - DndService works alongside this to also block system DND on Android
+ *
  * NotificationBlocker
  *
  * Suppresses incoming notifications from other apps while a nap is active.
@@ -7,12 +23,29 @@
  * Restored on cancel or when the nap ends.
  */
 
-import * as Notifications from 'expo-notifications';
+// ─────────────────────────────────────────
+// Imports
+// ─────────────────────────────────────────
+
+// expo-notifications is NOT supported in Expo Go (SDK 53+).
+// In __DEV__ (Expo Go) all notification calls are mocked to no-ops.
+let Notifications: any;
+if (!__DEV__) {
+  Notifications = require('expo-notifications');
+} else {
+  Notifications = { setNotificationHandler: () => {} };
+}
+
+// ─────────────────────────────────────────
+// Class Definition
+// ─────────────────────────────────────────
 
 class NotificationBlocker {
-  private originalBehavior: Notifications.NotificationBehavior | null = null;
+  private originalBehavior: any = null;
 
-  /** Call when monitoring starts -- silences all foreground notifications */
+  /**
+   * Suppresses all foreground notifications — call when monitoring starts
+   */
   async block(): Promise<void> {
     try {
       // Store current behavior
@@ -39,7 +72,9 @@ class NotificationBlocker {
     }
   }
 
-  /** Call when nap ends or user cancels -- restores normal notifications */
+  /**
+   * Restores normal notifications — call when the nap ends or the user cancels
+   */
   async unblock(): Promise<void> {
     try {
       Notifications.setNotificationHandler({
@@ -57,5 +92,9 @@ class NotificationBlocker {
     }
   }
 }
+
+// ─────────────────────────────────────────
+// Exports
+// ─────────────────────────────────────────
 
 export const notificationBlocker = new NotificationBlocker();

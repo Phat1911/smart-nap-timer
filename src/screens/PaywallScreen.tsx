@@ -1,19 +1,55 @@
+/**
+ * PaywallScreen — Tier upgrade screen (Free → Pro / Max)
+ *
+ * Responsible for:
+ * - Displaying Free / Pro / Max feature comparison
+ * - Handling payment via two flows:
+ *   + RevenueCat / App Store / Play Store (international and mandatory for iOS)
+ *   + PayOS (Vietnam, Android only) — opens browser, polls status
+ * - After successful payment: fetches tier from server and updates AsyncStorage
+ * - Restore purchases (RevenueCat path only)
+ * - Displaying the reason passed from the previous screen (e.g. "Upgrade to view full report")
+ *
+ * Used by:
+ * - AppNavigator: "Paywall" screen in the stack
+ * - Many screens navigate here when a gated feature is accessed
+ *
+ * Notes:
+ * - iOS: always uses RevenueCat (App Store Review Guideline 3.1.1)
+ * - Android + Vietnamese locale: uses PayOS, opens WebBrowser
+ * - Polls PayOS status every 3 seconds for up to 5 minutes
+ */
+
+// ─────────────────────────────────────────
+// Imports
+// ─────────────────────────────────────────
+
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  SafeAreaView, ActivityIndicator, Alert, Linking,
+  ActivityIndicator, Alert, Linking,
 } from 'react-native';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as WebBrowser from 'expo-web-browser';
 import { Colors } from '../constants';
+import { useLanguage } from '../contexts/LanguageContext';
+import { useTopRight } from '../contexts/TopRightContext';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { tierService } from '../services/TierService';
 import { TierName } from '../models/Tier';
 
+// ─────────────────────────────────────────
+// Types / Interfaces
+// ─────────────────────────────────────────
+
 type Nav   = NativeStackNavigationProp<RootStackParamList>;
 type Route = RouteProp<RootStackParamList, 'Paywall'>;
+
+// ─────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────
 
 // TODO: Replace with your real Terms of Service URL before App Store submission
 const TERMS_URL = 'https://smartnaptimer.app/terms';
@@ -22,44 +58,31 @@ const PRICE = {
   max: { vnd: '169.000 ₫', usd: '$6.99' },
 };
 
-// ── Feature lists ──────────────────────────────────────────────────────────────
-const FREE_FEATURES = [
-  '2 naps per day',
-  '7-session history',
-  '1 sound (Rain)',
-  '1 phone placement',
-  'Science-based suggestions',
-];
 
-const PRO_FEATURES = [
-  '5 naps per day',
-  '30-session history',
-  '4 sounds (Rain, Fan, Static...)',
-  '2 phone placements (combo fusion)',
-  'AI predictions active',
-  'Full insufficient sleep report',
-];
-
-const MAX_FEATURES = [
-  'Unlimited naps',
-  'Full history tracking',
-  'All sounds & ambient library',
-  '4 phone placements (quad fusion)',
-  'AI + confidence % analysis',
-  'Session data export (JSON/CSV)',
-];
+// ─────────────────────────────────────────
+// Render
+// ─────────────────────────────────────────
 
 export default function PaywallScreen() {
+  const { strings: Strings } = useLanguage();
+  const { setButton } = useTopRight();
   const navigation = useNavigation<Nav>();
   const route      = useRoute<Route>();
   const reason     = route.params?.reason;
+
+  // Register "Maybe Later" in global top-right overlay
+  useEffect(() => {
+    setButton({ type: 'text', label: Strings.paywall_maybe_later, onPress: () => navigation.goBack() });
+    return () => setButton(null);
+  }, [Strings.paywall_maybe_later]);
 
   const isVN = tierService.isVietnamese;
 
   const [loading, setLoading]   = useState<'pro' | 'max' | 'restore' | null>(null);
   const [currentTier, setCurrentTier] = useState<TierName>('free');
-  const pollRef     = useRef<ReturnType<typeof setInterval> | null>(null);
-  const mountedRef  = useRef(true);
+  const pollRef        = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mountedRef     = useRef(true);
+  const isUpgradingRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -75,12 +98,13 @@ export default function PaywallScreen() {
   // ── Handlers ──────────────────────────────────────────────────────────────
 
   async function handleUpgrade(tier: 'pro' | 'max') {
-    if (loading) return;
+    if (isUpgradingRef.current) return;
+    isUpgradingRef.current = true;
     setLoading(tier);
     try {
       if (isVN) {
         // Vietnamese: PayOS flow
-        const userId = `user_${Date.now()}`;
+        const userId = await tierService.getOrCreateDeviceId();
         const { checkoutUrl, orderCode } = await tierService.createPayOSLink(tier, userId);
 
         await WebBrowser.openBrowserAsync(checkoutUrl);
@@ -88,52 +112,63 @@ export default function PaywallScreen() {
         // Poll for payment confirmation
         let attempts = 0;
         pollRef.current = setInterval(async () => {
+          if (!mountedRef.current) {
+            clearInterval(pollRef.current!);
+            pollRef.current = null;
+            return;
+          }
           attempts++;
           const status = await tierService.pollPayOSStatus(orderCode);
 
           if (status === 'paid') {
             clearInterval(pollRef.current!);
+            // Fetch tier from server -- backend webhook is the only authority
+            const userId = await tierService.getOrCreateDeviceId();
+            const serverTier = await tierService.fetchTierFromServer(userId);
+            isUpgradingRef.current = false;
             if (!mountedRef.current) return;
-            await tierService.setTier(tier);
-            setCurrentTier(tier);
+            setCurrentTier(serverTier);
             setLoading(null);
             Alert.alert(
-              'Payment Successful',
-              `Welcome to ${tier === 'pro' ? 'Pro' : 'Max'}! Your plan is now active.`,
-              [{ text: 'OK', onPress: () => navigation.goBack() }],
+              Strings.paywall_alert_success_title(tier === 'pro' ? 'Pro' : 'Max'),
+              Strings.paywall_alert_success_body,
+              [{ text: Strings.common_ok, onPress: () => navigation.goBack() }],
             );
           } else if (status === 'cancelled' || attempts >= 40) {
             clearInterval(pollRef.current!);
+            isUpgradingRef.current = false;
             if (!mountedRef.current) return;
             setLoading(null);
             if (status === 'cancelled') {
-              Alert.alert('Payment Cancelled', 'Your payment was cancelled.');
+              Alert.alert(Strings.paywall_alert_cancelled_title, Strings.paywall_alert_cancelled_body);
             } else {
               // Poll timed out -- notify user so they are not left confused
               Alert.alert(
-                'Payment Pending',
-                'We could not confirm your payment yet. If you completed payment, your plan will activate shortly.',
+                Strings.paywall_alert_pending_title,
+                Strings.paywall_alert_pending_body,
               );
             }
           }
         }, 3000);
       } else {
         // International: RevenueCat IAP
-        const userId = `user_${Date.now()}`;
+        const userId = await tierService.getOrCreateDeviceId();
         const newTier = await tierService.purchase(tier, userId);
+        isUpgradingRef.current = false;
         if (!mountedRef.current) return;
         setCurrentTier(newTier);
         setLoading(null);
         Alert.alert(
-          'Upgrade Successful',
-          `Welcome to ${newTier === 'pro' ? 'Pro' : 'Max'}!`,
-          [{ text: 'OK', onPress: () => navigation.goBack() }],
+          Strings.paywall_alert_success_title(newTier === 'pro' ? 'Pro' : 'Max'),
+          Strings.paywall_alert_success_body,
+          [{ text: Strings.common_ok, onPress: () => navigation.goBack() }],
         );
       }
     } catch (err: any) {
+      isUpgradingRef.current = false;
       if (!mountedRef.current) return;
       setLoading(null);
-      Alert.alert('Purchase Failed', err?.message ?? 'Something went wrong. Please try again.');
+      Alert.alert(Strings.paywall_alert_failed_title, err?.message ?? Strings.paywall_alert_failed_body);
     }
   }
 
@@ -146,16 +181,16 @@ export default function PaywallScreen() {
       setCurrentTier(restored);
       setLoading(null);
       Alert.alert(
-        'Purchases Restored',
+        Strings.paywall_alert_restored_title,
         restored === 'free'
-          ? 'No active purchases found.'
-          : `Your ${restored === 'pro' ? 'Pro' : 'Max'} plan has been restored!`,
-        [{ text: 'OK', onPress: () => { if (restored !== 'free') navigation.goBack(); } }],
+          ? Strings.paywall_alert_restored_none
+          : Strings.paywall_alert_restored_body(restored === 'pro' ? 'Pro' : 'Max'),
+        [{ text: Strings.common_ok, onPress: () => { if (restored !== 'free') navigation.goBack(); } }],
       );
     } catch (err: any) {
       if (!mountedRef.current) return;
       setLoading(null);
-      Alert.alert('Restore Failed', err?.message ?? 'Could not restore purchases.');
+      Alert.alert(Strings.paywall_alert_restore_failed_title, err?.message ?? Strings.paywall_alert_restore_failed_body);
     }
   }
 
@@ -166,7 +201,7 @@ export default function PaywallScreen() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <SafeAreaView style={styles.root}>
+    <SafeAreaView style={styles.root} edges={['top']}>
       {/* Decorative glows */}
       <View style={styles.glowLeft}  pointerEvents="none" />
       <View style={styles.glowRight} pointerEvents="none" />
@@ -174,12 +209,9 @@ export default function PaywallScreen() {
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <MaterialCommunityIcons name="crown" size={22} color={Colors.primary} />
-          <Text style={styles.headerBrand}>Sleep Luxe</Text>
+          <Text style={{ fontSize: 22 }}>👑</Text>
+          <Text style={styles.headerBrand}>{Strings.paywall_header_brand}</Text>
         </View>
-        <TouchableOpacity onPress={() => navigation.goBack()} activeOpacity={0.7}>
-          <Text style={styles.maybeLater}>Maybe later</Text>
-        </TouchableOpacity>
       </View>
 
       <ScrollView
@@ -189,16 +221,16 @@ export default function PaywallScreen() {
         {/* Hero */}
         <View style={styles.hero}>
           <Text style={styles.heroTitle}>
-            {'Unlock \n'}
+            {Strings.paywall_hero_unlock + ' \n'}
             <Text style={styles.heroAccent}>{'Smart Nap'}</Text>
             {' Timer'}
           </Text>
           <Text style={styles.heroSub}>
-            Choose the plan that fits your sleep needs and optimize your rest.
+            {Strings.paywall_hero_sub}
           </Text>
           {reason && (
             <View style={styles.reasonBadge}>
-              <MaterialCommunityIcons name="information-outline" size={14} color={Colors.primary} />
+              <Text style={{ fontSize: 14 }}>ℹ️</Text>
               <Text style={styles.reasonText}>{reason}</Text>
             </View>
           )}
@@ -208,15 +240,15 @@ export default function PaywallScreen() {
         <View style={styles.cardFree}>
           <View style={styles.cardHeader}>
             <View>
-              <Text style={styles.tierLabel}>Baseline</Text>
-              <Text style={styles.tierName}>FREE</Text>
+              <Text style={styles.tierLabel}>{Strings.paywall_free_tier_label}</Text>
+              <Text style={styles.tierName}>{Strings.paywall_free_tier_name}</Text>
             </View>
-            <Text style={styles.priceMain}>$0</Text>
+            <Text style={styles.priceMain}>{Strings.paywall_free_price}</Text>
           </View>
-          <FeatureList features={FREE_FEATURES} iconName="check-circle-outline" iconColor={Colors.outline} />
+          <FeatureList features={Strings.paywall_free_features} emoji="✅" />
           <View style={styles.currentPlanBtn}>
             <Text style={styles.currentPlanText}>
-              {currentTier === 'free' ? 'Current Plan' : 'Free tier'}
+              {currentTier === 'free' ? Strings.paywall_current_plan : Strings.paywall_free_downgrade_label}
             </Text>
           </View>
         </View>
@@ -225,21 +257,21 @@ export default function PaywallScreen() {
         <View style={styles.cardPro}>
           {/* Most popular badge */}
           <View style={styles.popularBadge}>
-            <Text style={styles.popularText}>Most Popular</Text>
+            <Text style={styles.popularText}>{Strings.paywall_most_popular}</Text>
           </View>
 
           <View style={styles.cardHeader}>
             <View>
-              <Text style={[styles.tierLabel, { color: Colors.primary }]}>Optimized Rest</Text>
+              <Text style={[styles.tierLabel, { color: Colors.primary }]}>{Strings.paywall_pro_tier_label}</Text>
               <Text style={styles.tierName}>Pro</Text>
             </View>
             <View style={styles.priceBlock}>
               <Text style={styles.priceMain}>{priceLabel('pro')}</Text>
-              <Text style={styles.priceSub}>/ month</Text>
+              <Text style={styles.priceSub}>{Strings.paywall_per_month}</Text>
             </View>
           </View>
 
-          <FeatureList features={PRO_FEATURES} iconName="star-four-points" iconColor={Colors.primary} />
+          <FeatureList features={Strings.paywall_pro_features} emoji="✨" />
 
           <TouchableOpacity
             style={[styles.upgradeBtn, styles.upgradeBtnPro, currentTier === 'pro' && styles.disabledBtn]}
@@ -251,7 +283,7 @@ export default function PaywallScreen() {
               <ActivityIndicator color={Colors.on_primary_container} />
             ) : (
               <Text style={styles.upgradeBtnTextPro}>
-                {currentTier === 'pro' ? 'Current Plan' : 'Upgrade to Pro'}
+                {currentTier === 'pro' ? Strings.paywall_current_plan : Strings.paywall_upgrade_pro}
               </Text>
             )}
           </TouchableOpacity>
@@ -261,16 +293,16 @@ export default function PaywallScreen() {
         <View style={styles.cardMax}>
           <View style={styles.cardHeader}>
             <View>
-              <Text style={[styles.tierLabel, { color: Colors.secondary }]}>Elite Tier</Text>
+              <Text style={[styles.tierLabel, { color: Colors.secondary }]}>{Strings.paywall_max_tier_label}</Text>
               <Text style={styles.tierName}>Max</Text>
             </View>
             <View style={styles.priceBlock}>
               <Text style={[styles.priceMain, { color: Colors.secondary }]}>{priceLabel('max')}</Text>
-              <Text style={styles.priceSub}>/ month</Text>
+              <Text style={styles.priceSub}>{Strings.paywall_per_month}</Text>
             </View>
           </View>
 
-          <FeatureList features={MAX_FEATURES} iconName="diamond-stone" iconColor={Colors.secondary} />
+          <FeatureList features={Strings.paywall_max_features} emoji="💎" />
 
           <TouchableOpacity
             style={[styles.upgradeBtn, styles.upgradeBtnMax, currentTier === 'max' && styles.disabledBtn]}
@@ -282,7 +314,7 @@ export default function PaywallScreen() {
               <ActivityIndicator color={Colors.secondary} />
             ) : (
               <Text style={styles.upgradeBtnTextMax}>
-                {currentTier === 'max' ? 'Current Plan' : 'Upgrade to Max'}
+                {currentTier === 'max' ? Strings.paywall_current_plan : Strings.paywall_upgrade_max}
               </Text>
             )}
           </TouchableOpacity>
@@ -301,8 +333,8 @@ export default function PaywallScreen() {
             <ActivityIndicator size="small" color={Colors.on_surface_variant} />
           ) : (
             <>
-              <MaterialCommunityIcons name="restore" size={20} color={Colors.on_surface_variant} />
-              <Text style={styles.footerBtnText}>Restore purchases</Text>
+              <Text style={{ fontSize: 20 }}>🔄</Text>
+              <Text style={styles.footerBtnText}>{Strings.paywall_restore}</Text>
             </>
           )}
         </TouchableOpacity>
@@ -312,8 +344,8 @@ export default function PaywallScreen() {
           onPress={() => Linking.openURL(TERMS_URL)}
           activeOpacity={0.7}
         >
-          <MaterialCommunityIcons name="shield-check-outline" size={20} color={Colors.on_surface_variant} />
-          <Text style={styles.footerBtnText}>Terms of Service</Text>
+          <Text style={{ fontSize: 20 }}>🛡️</Text>
+          <Text style={styles.footerBtnText}>{Strings.paywall_terms}</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -322,17 +354,16 @@ export default function PaywallScreen() {
 
 // ── FeatureList sub-component ─────────────────────────────────────────────────
 function FeatureList({
-  features, iconName, iconColor,
+  features, emoji,
 }: {
   features: string[];
-  iconName: string;
-  iconColor: string;
+  emoji: string;
 }) {
   return (
     <View style={featureStyles.list}>
       {features.map((f) => (
         <View key={f} style={featureStyles.row}>
-          <MaterialCommunityIcons name={iconName as any} size={18} color={iconColor} />
+          <Text style={{ fontSize: 18 }}>{emoji}</Text>
           <Text style={featureStyles.text}>{f}</Text>
         </View>
       ))}
@@ -371,10 +402,6 @@ const styles = StyleSheet.create({
   },
   headerLeft:  { flexDirection: 'row', alignItems: 'center', gap: 8 },
   headerBrand: { fontSize: 20, fontWeight: '800', color: Colors.primary, letterSpacing: -0.3 },
-  maybeLater:  {
-    fontSize: 11, fontWeight: '700', letterSpacing: 2,
-    textTransform: 'uppercase', color: Colors.on_surface_variant,
-  },
 
   // Scroll
   scroll: { paddingHorizontal: 24, paddingBottom: 120, gap: 16 },

@@ -1,21 +1,55 @@
-import React from 'react';
+/**
+ * DashboardScreen — Nap history statistics summary screen
+ *
+ * Responsible for:
+ * - Displaying SVG line chart of latency across the last 10 sessions
+ * - Displaying stats: total sessions, avg latency, avg sleep, avg rating
+ * - Displaying streak & weekly count (7.2)
+ * - Allowing sharing a weekly summary as text (7.4)
+ * - Limiting history by tier (Free: 7 sessions, Pro: 30, Max: unlimited)
+ * - Showing a warning when there is an insufficient sleep streak (3.17)
+ *
+ * Used by:
+ * - AppNavigator: "Dashboard" tab in MainTabs
+ *
+ * Notes:
+ * - buildLinePath / buildAreaPath use bezier curves (C command) for smooth curves
+ *   instead of straight polylines — requires at least 2 points to draw
+ * - useFocusEffect refreshes data every time the tab gains focus (3.10)
+ */
+
+// ─────────────────────────────────────────
+// Imports
+// ─────────────────────────────────────────
+
+import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView,
-  TouchableOpacity, ActivityIndicator, Dimensions,
+  TouchableOpacity, ActivityIndicator, Dimensions, Share,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
 import Svg, { Path, Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Colors } from '../constants';
+import { useLanguage } from '../contexts/LanguageContext';
 import { useDashboardData } from '../hooks/useDashboardData';
 import { useTier } from '../hooks/useTier';
+import { useStreak } from '../hooks/useStreak';
+import { sessionService } from '../services/SessionService';
 import { RootStackParamList } from '../navigation/AppNavigator';
+
+// ─────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const CHART_W = SCREEN_W - 96;
 const CHART_H = 120;
+
+// ─────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────
 
 function buildLinePath(pts: [number, number][], w: number, h: number): string {
   const mapped = pts.map(([x, y]) => [x * w, y * h] as [number, number]);
@@ -33,9 +67,18 @@ function buildAreaPath(pts: [number, number][], w: number, h: number): string {
   return buildLinePath(pts, w, h) + ` L${w} ${h} L0 ${h} Z`;
 }
 
+// ─────────────────────────────────────────
+// Types / Interfaces
+// ─────────────────────────────────────────
+
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
+// ─────────────────────────────────────────
+// Render
+// ─────────────────────────────────────────
+
 export default function DashboardScreen() {
+  const { strings: Strings } = useLanguage();
   const navigation = useNavigation<Nav>();
   const { stats, chartPoints, showInsufficientWarning, isEmpty, loading, refresh } =
     useDashboardData();
@@ -43,10 +86,42 @@ export default function DashboardScreen() {
   // 5.5 — Tier limits for history slicing
   const { limits } = useTier();
 
-  // Refresh when tab gains focus (3.10)
+  // 7.2 — Streak data (also used by the share card)
+  const streak = useStreak();
+
+  // 7.4 — Avg confidence for share text
+  const [avgConfidence, setAvgConfidence] = useState(0);
+
+  // Refresh when tab gains focus (3.10) + compute avg confidence (7.4)
   useFocusEffect(
-    React.useCallback(() => { refresh(); }, [refresh])
+    useCallback(() => {
+      refresh();
+      sessionService.loadAll().then((sessions) => {
+        if (sessions.length === 0) { setAvgConfidence(0); return; }
+        const avg = sessions.reduce((s, n) => s + n.confidence_score, 0) / sessions.length;
+        setAvgConfidence(Math.round(avg));
+      }).catch(() => {});
+    }, [refresh])
   );
+
+  // 7.4 — Share a text summary of the weekly stats
+  const handleShare = useCallback(async () => {
+    const weekOf = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const text = [
+      `📊 My Smart Nap Timer — Week of ${weekOf}`,
+      `Naps this week: ${streak.weeklyCount}`,
+      `Avg sleep confidence: ${avgConfidence}%`,
+      `Avg wake rating: ${(stats?.avg_wake_rating ?? 0).toFixed(1)}/5`,
+      `Streak: ${streak.currentStreak} days 🔥`,
+      '',
+      'Tracked with Smart Nap Timer',
+    ].join('\n');
+    try {
+      await Share.share({ message: text });
+    } catch {
+      // Silent
+    }
+  }, [streak, avgConfidence, stats]);
 
   // 5.5 — Apply history limit to chart points
   const historyLimit = limits.historyLimit === Infinity ? chartPoints.length : limits.historyLimit;
@@ -71,10 +146,10 @@ export default function DashboardScreen() {
 
   const statItems = stats
     ? [
-        { icon: 'weather-night', iconColor: Colors.primary,       value: String(stats.total_sessions),               label: 'Total Naps' },
-        { icon: 'timer',         iconColor: Colors.secondary,     value: `${stats.avg_latency_minutes}m`,             label: 'Avg to Sleep' },
-        { icon: 'sleep',         iconColor: Colors.tertiary,      value: `${stats.avg_actual_sleep_minutes}m`,        label: 'Avg Sleep' },
-        { icon: 'star',          iconColor: Colors.primary_fixed, value: `${stats.avg_wake_rating.toFixed(1)}/5`,     label: 'Avg Rating' },
+        { icon: '🌙', value: String(stats.total_sessions),               label: Strings.dashboard_total_naps },
+        { icon: '⏱️', value: `${stats.avg_latency_minutes}m`,             label: Strings.dashboard_avg_latency },
+        { icon: '😴', value: `${stats.avg_actual_sleep_minutes}m`,        label: Strings.dashboard_avg_sleep },
+        { icon: '⭐', value: `${stats.avg_wake_rating.toFixed(1)}/5`,     label: Strings.dashboard_best_rating },
       ]
     : [];
 
@@ -82,8 +157,8 @@ export default function DashboardScreen() {
     <SafeAreaView style={styles.root} edges={['top']}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <MaterialCommunityIcons name="shimmer" size={22} color={Colors.primary} />
-          <Text style={styles.headerTitle}>Your Sleep Stats</Text>
+          <Text style={{ fontSize: 22 }}>✨</Text>
+          <Text style={styles.headerTitle}>{Strings.dashboard_title}</Text>
         </View>
       </View>
 
@@ -93,9 +168,9 @@ export default function DashboardScreen() {
         </View>
       ) : isEmpty ? (
         <View style={styles.center}>
-          <MaterialCommunityIcons name="sleep" size={48} color={Colors.outline_variant} />
-          <Text style={styles.emptyTitle}>No sessions yet</Text>
-          <Text style={styles.emptyBody}>Complete your first nap to see stats here.</Text>
+          <Text style={{ fontSize: 48 }}>😴</Text>
+          <Text style={styles.emptyTitle}>{Strings.dashboard_empty_title}</Text>
+          <Text style={styles.emptyBody}>{Strings.dashboard_empty_body}</Text>
         </View>
       ) : (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
@@ -104,12 +179,12 @@ export default function DashboardScreen() {
           {showInsufficientWarning && (
             <View style={styles.warningBanner}>
               <View style={styles.warningIconBox}>
-                <MaterialCommunityIcons name="alert" size={20} color="#000" />
+                <Text style={{ fontSize: 20 }}>⚠️</Text>
               </View>
               <View style={styles.warningText}>
-                <Text style={styles.warningEyebrow}>Attention Needed</Text>
+                <Text style={styles.warningEyebrow}>{Strings.dashboard_attention_needed}</Text>
                 <Text style={styles.warningBody}>
-                  You have had insufficient sleep 3 sessions in a row
+                  {Strings.dashboard_insufficient_warning}
                 </Text>
               </View>
             </View>
@@ -119,7 +194,7 @@ export default function DashboardScreen() {
           <View style={styles.statsGrid}>
             {statItems.map((stat) => (
               <View key={stat.label} style={styles.statCard}>
-                <MaterialCommunityIcons name={stat.icon as any} size={22} color={stat.iconColor} />
+                <Text style={{ fontSize: 22 }}>{stat.icon}</Text>
                 <View style={styles.statBottom}>
                   <Text style={styles.statValue}>{stat.value}</Text>
                   <Text style={styles.statLabel}>{stat.label}</Text>
@@ -133,8 +208,8 @@ export default function DashboardScreen() {
             <View style={styles.chartCard}>
               <View style={styles.chartHeader}>
                 <View>
-                  <Text style={styles.chartTitle}>Sleep latency trend</Text>
-                  <Text style={styles.chartSub}>Minutes to fall asleep (last {visiblePoints.length} sessions)</Text>
+                  <Text style={styles.chartTitle}>{Strings.dashboard_trend_title}</Text>
+                  <Text style={styles.chartSub}>{Strings.dashboard_chart_sub(visiblePoints.length)}</Text>
                 </View>
               </View>
               <Svg width={CHART_W} height={CHART_H}>
@@ -157,20 +232,30 @@ export default function DashboardScreen() {
           {hiddenCount > 0 && (
             <TouchableOpacity
               style={styles.historyBanner}
-              onPress={() => navigation.navigate('Paywall', { reason: 'Upgrade for full session history' })}
+              onPress={() => navigation.navigate('Paywall', { reason: Strings.dashboard_upgrade_history_hint })}
               activeOpacity={0.8}
             >
-              <MaterialCommunityIcons name="crown" size={16} color={Colors.primary} />
+              <Text style={{ fontSize: 16 }}>👑</Text>
               <Text style={styles.historyBannerText}>
-                Showing last {visiblePoints.length} sessions. Upgrade for full history.
+                {Strings.dashboard_history_banner(visiblePoints.length, hiddenCount)}
               </Text>
             </TouchableOpacity>
           )}
+
+          {/* 7.4 — Share sleep report button */}
+          <TouchableOpacity style={styles.shareBtn} onPress={handleShare} activeOpacity={0.85}>
+            <Text style={{ fontSize: 18 }}>📤</Text>
+            <Text style={styles.shareBtnText}>Share Sleep Report</Text>
+          </TouchableOpacity>
         </ScrollView>
       )}
     </SafeAreaView>
   );
 }
+
+// ─────────────────────────────────────────
+// Styles
+// ─────────────────────────────────────────
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.background },
@@ -217,6 +302,16 @@ const styles = StyleSheet.create({
   chartHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' },
   chartTitle: { fontSize: 16, fontWeight: '700', color: Colors.on_surface, letterSpacing: -0.2 },
   chartSub: { fontSize: 11, color: Colors.on_surface_variant, marginTop: 2 },
+  shareBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 8, paddingVertical: 16, borderRadius: 99,
+    backgroundColor: Colors.primary_dim,
+    shadowColor: '#1e009f', shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.3, shadowRadius: 16, elevation: 6,
+  },
+  shareBtnText: {
+    fontSize: 15, fontWeight: '700', color: Colors.on_primary,
+  },
   historyBanner: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     backgroundColor: 'rgba(168,164,255,0.1)',

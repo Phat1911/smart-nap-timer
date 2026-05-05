@@ -1,24 +1,60 @@
 /**
+ * UsageService — Tracks daily nap session counts and enforces tier limits
+ *
+ * Responsible for:
+ * - Counting how many nap sessions have been started today
+ * - Automatically resetting the counter when the date changes (YYYY-MM-DD comparison)
+ * - Checking whether the user is allowed to start a new session under their tier
+ *
+ * Used by:
+ * - useTierGate: checkCanStartSession() to display status and the upgrade prompt
+ * - SleepingScreen / MonitoringScreen: recordSessionStart() when a nap begins
+ * - DevToolsScreen: resetToday() to reset the counter during testing
+ *
+ * Notes:
+ * - Uses YYYY-MM-DD (ISO slice) for date comparison, independent of timezone
+ * - Max tier (Infinity daily limit) returns 999 in the UI to hide the counter
+ *
  * Task 5.1 -- Usage tracking service
  *
  * Counts how many nap sessions the user has started today,
  * resets the counter at midnight, and gates session starts
  * against the active tier's daily limit.
  */
+// ─────────────────────────────────────────
+// Imports
+// ─────────────────────────────────────────
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { TierName, TIER_LIMITS } from '../models/Tier';
 
+// ─────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────
+
 const USAGE_KEY   = '@smart_nap_timer:daily_usage';
 const DATE_KEY    = '@smart_nap_timer:usage_date';
+
+// ─────────────────────────────────────────
+// Types / Interfaces
+// ─────────────────────────────────────────
 
 interface UsageRecord {
   date: string;   // YYYY-MM-DD
   count: number;
 }
 
+// ─────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────
+
 function todayString(): string {
   return new Date().toISOString().slice(0, 10); // 'YYYY-MM-DD'
 }
+
+// ─────────────────────────────────────────
+// Class Definition
+// ─────────────────────────────────────────
 
 class UsageService {
   // ── Internal helpers ───────────────────────────────────────────────────────
@@ -89,5 +125,9 @@ class UsageService {
     await this.saveRecord({ date: todayString(), count: 0 });
   }
 }
+
+// ─────────────────────────────────────────
+// Exports
+// ─────────────────────────────────────────
 
 export const usageService = new UsageService();

@@ -1,4 +1,33 @@
+/**
+ * Tier.ts — App tier (plan) definitions and feature limits per tier
+ *
+ * Responsible for:
+ * - Defining TierName: 'free' | 'pro' | 'max'
+ * - Defining TierLimits: feature limits for each tier (dailyNapLimit, historyLimit, aiEnabled...)
+ * - Defining TIER_LIMITS: lookup table of limits by tier
+ * - Defining TierPricing, TIER_PRICING: pricing info and product IDs for RevenueCat
+ *
+ * Used by:
+ * - TierService: reads TIER_LIMITS to gate feature access
+ * - useTierGate: checks dailyNapLimit before each nap session
+ * - PaywallScreen: displays TIER_PRICING
+ * - HomeScreen, DashboardScreen: checks aiEnabled, historyLimit, maxPlacements
+ *
+ * Notes:
+ * - dailyNapLimit = Infinity for Max tier; displayed as 999 in UI (Infinity cannot be rendered)
+ * - maxPlacements: Free=1 (single), Pro=2 (dual), Max=4 (quad) — controls P.10 multi-placement feature
+ * - TIER_PRICING only has 'pro' and 'max' (no 'free' since free does not require a purchase)
+ */
+
+// ─────────────────────────────────────────
+// Imports
+// ─────────────────────────────────────────
+
 import type { SoundType } from '../services/AudioService';
+
+// ─────────────────────────────────────────
+// Types / Interfaces
+// ─────────────────────────────────────────
 
 export type TierName = 'free' | 'pro' | 'max';
 
@@ -23,6 +52,10 @@ export interface TierLimits {
    */
   maxPlacements: number;
 }
+
+// ─────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────
 
 /** Feature limits for each tier */
 export const TIER_LIMITS: Record<TierName, TierLimits> = {

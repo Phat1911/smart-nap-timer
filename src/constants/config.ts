@@ -1,4 +1,42 @@
+/**
+ * config.ts — Global configuration constants and localization data helpers
+ *
+ * Responsible for:
+ * - DETECTION: sleep detection parameters (sample interval, stillness %, score trigger...)
+ * - ADAPTIVE: EMA weights for adaptive threshold (70/30 prev/last)
+ * - INSUFFICIENT: insufficient sleep threshold ratio (0.85) and warning streak (3)
+ * - DURATION_SUGGESTIONS: 3 standard duration options (20/60/90 minutes)
+ * - TIME_OF_DAY: time-of-day bucket ranges (night/morning/afternoon/evening)
+ * - PLACEMENT_PROFILES: per-placement parameters (variance threshold, weights, icon, tip)
+ * - getLocalizedDurationSuggestions(): returns DURATION_SUGGESTIONS with translated descriptions
+ * - getLocalizedPlacementProfiles(): returns PLACEMENT_PROFILES with localized label/desc/tip
+ * - getSleepScoreTrigger(): returns score trigger (can be overridden in __DEV__)
+ *
+ * Used by:
+ * - SessionService: DETECTION, ADAPTIVE, INSUFFICIENT, TIME_OF_DAY
+ * - ConfidenceEngine: DETECTION, PLACEMENT_PROFILES
+ * - HomeScreen: DURATION_SUGGESTIONS, PLACEMENT_PROFILES (via getLocalized helpers)
+ * - useDurationSuggestion, useAdaptiveThreshold: ADAPTIVE, DURATION_SUGGESTIONS
+ * - AlarmService: ALARM_SOUNDS, SNOOZE_MINUTES, ALARM_RAMP_SECONDS
+ * - DevToolsScreen: getSleepScoreTrigger(), _devOverrides
+ *
+ * Notes:
+ * - PLACEMENT_PROFILES uses English defaults; always call getLocalized helpers when rendering UI
+ * - getSleepScoreTrigger() returns _devOverrides.sleepScoreTrigger in __DEV__ for DevTools customization
+ * - STILL_ACCEL_VARIANCE = 0.015 is the default threshold; each placement has its own stillVarianceThreshold
+ */
+
+// ─────────────────────────────────────────
+// Imports
+// ─────────────────────────────────────────
+
 import type { PhonePlacement } from '../models/Session';
+import { Strings } from './strings';
+import type { StringsType } from './strings';
+
+// ─────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────
 
 // Detection thresholds
 export const DETECTION = {
@@ -10,7 +48,7 @@ export const DETECTION = {
   STILLNESS_PERCENTAGE: 0.95,      // 95% of samples must be still
   RESET_MOVEMENT_SECONDS: 30,      // sustained movement for this long resets detection
   SLEEP_SCORE_TRIGGER: 80,         // score >= 80 = asleep
-  SUSTAINED_HIGH_COUNT: 3,         // consecutive high-score checks before firing
+  SUSTAINED_HIGH_COUNT: 6,         // consecutive high-score checks before firing
   STILL_ACCEL_VARIANCE: 0.015,     // default accelVariance below this = still
 
   // Default confidence score weights (overridden per placement profile)
@@ -62,8 +100,12 @@ export const ALARM_SOUNDS = [
   { id: 'alarm_digital', label: 'Digital', file: require('../../assets/sounds/alarm_digital.wav') },
 ] as const;
 
-export type AlarmSoundId = typeof ALARM_SOUNDS[number]['id'];
+export type AlarmSoundId = typeof ALARM_SOUNDS[number]['id'] | (string & {});
 export const DEFAULT_ALARM_SOUND: AlarmSoundId = 'alarm';
+
+// ─────────────────────────────────────────
+// Types / Interfaces
+// ─────────────────────────────────────────
 
 // ── P.2  Placement profiles ───────────────────────────────────────────────────
 
@@ -97,53 +139,59 @@ export interface PlacementProfile {
   accuracyStars: number;
 }
 
+// ─────────────────────────────────────────
+// Placement Profiles
+// ─────────────────────────────────────────
+
 export const PLACEMENT_PROFILES: Record<PhonePlacement, PlacementProfile> = {
   mattress: {
     label: 'Mattress',
     description: 'Face-down beside your hip',
-    icon: 'bed-queen-outline',
-    // Mattress absorbs movement -- use lower variance threshold for better sensitivity
+    icon: '🛏️',
+    // Mattress absorbs all vibration — phone is always still, so accel is a weak
+    // discriminator. Duration is the most reliable proxy; mic rhythm provides
+    // the false-positive guard (random noise has no 12-24 BPM rhythm, real
+    // breathing does, so the higher micAgreeMin filters awake noise out).
     stillVarianceThreshold: 0.008,
-    // Accel is primary signal; mic is weak (phone far from mouth)
-    weights: { accel: 50, gyro: 15, mic: 20, duration: 15 },
-    accelAgreeMin: 55,
-    micAgreeMin: 25,
+    weights: { accel: 20, gyro: 5, mic: 20, duration: 55 },
+    accelAgreeMin: 72,
+    micAgreeMin: 62,
     tip: 'Place face-down on the mattress beside your hip. Do not hold it.',
     accuracyStars: 3,
   },
   hand: {
     label: 'Hand',
     description: 'Held loosely in your hand',
-    icon: 'hand-back-right-outline',
+    icon: '✋',
     // Grip relaxation = sharp stillness onset -- good accel signal
     stillVarianceThreshold: 0.020,
     weights: { accel: 55, gyro: 25, mic: 10, duration: 10 },
     accelAgreeMin: 60,
-    micAgreeMin: 20,
-    tip: 'Hold loosely. The app detects when your grip relaxes at sleep onset.',
+    micAgreeMin: 25,
+    tip: 'Hold loosely in your palm. Once the confidence bar reaches ~65%, gently place the phone on your chest or mattress — detection continues automatically.',
     accuracyStars: 4,
   },
   chest: {
     label: 'Chest',
     description: 'Resting on your chest',
-    icon: 'human',
+    icon: '🧍',
     // Chest moves with breathing -- be lenient on accel, rely on mic rhythm
     stillVarianceThreshold: 0.030,
     weights: { accel: 20, gyro: 10, mic: 55, duration: 15 },
     accelAgreeMin: 25,
-    micAgreeMin: 50,
+    micAgreeMin: 58,
     tip: 'Rest face-up on your chest. Breathing rhythm detected directly.',
     accuracyStars: 4,
   },
   pocket: {
     label: 'Pocket',
     description: 'In pocket or on nightstand',
-    icon: 'table-furniture',
+    icon: '🪑',
     // Weakest signal -- rely more on duration as a proxy
     stillVarianceThreshold: 0.005,
     weights: { accel: 30, gyro: 15, mic: 15, duration: 40 },
     accelAgreeMin: 35,
-    micAgreeMin: 15,
+    micAgreeMin: 20,
     tip: 'Least accurate. Use mattress or hand placement for better results.',
     accuracyStars: 2,
   },
@@ -151,3 +199,68 @@ export const PLACEMENT_PROFILES: Record<PhonePlacement, PlacementProfile> = {
 
 /** Default placement for new users */
 export const DEFAULT_PLACEMENT: PhonePlacement = 'mattress';
+
+// ─────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────
+
+/**
+ * Returns DURATION_SUGGESTIONS with descriptions translated to the current language
+ * @param strings - Translated Strings object (default: English Strings)
+ * @returns DURATION_SUGGESTIONS array with localised descriptions
+ */
+export function getLocalizedDurationSuggestions(strings: StringsType = Strings): typeof DURATION_SUGGESTIONS {
+  return [
+    { ...DURATION_SUGGESTIONS[0], description: strings.duration_power_nap },
+    { ...DURATION_SUGGESTIONS[1], description: strings.duration_deep_rest },
+    { ...DURATION_SUGGESTIONS[2], description: strings.duration_full_cycle },
+  ];
+}
+
+/**
+ * Returns PLACEMENT_PROFILES with label, description, and tip translated to the current language
+ * @param strings - Translated Strings object (default: English Strings)
+ * @returns PLACEMENT_PROFILES with all text localised
+ */
+export function getLocalizedPlacementProfiles(strings: StringsType = Strings): typeof PLACEMENT_PROFILES {
+  return {
+    mattress: {
+      ...PLACEMENT_PROFILES.mattress,
+      label:       strings.placement_mattress_label,
+      description: strings.placement_mattress_desc,
+      tip:         strings.placement_mattress_tip,
+    },
+    hand: {
+      ...PLACEMENT_PROFILES.hand,
+      label:       strings.placement_hand_label,
+      description: strings.placement_hand_desc,
+      tip:         strings.placement_hand_tip,
+    },
+    chest: {
+      ...PLACEMENT_PROFILES.chest,
+      label:       strings.placement_chest_label,
+      description: strings.placement_chest_desc,
+      tip:         strings.placement_chest_tip,
+    },
+    pocket: {
+      ...PLACEMENT_PROFILES.pocket,
+      label:       strings.placement_pocket_label,
+      description: strings.placement_pocket_desc,
+      tip:         strings.placement_pocket_tip,
+    },
+  };
+}
+
+// ── Dev-only runtime overrides (resets on restart, no persistence) ────────────
+
+export const _devOverrides = {
+  sleepScoreTrigger: DETECTION.SLEEP_SCORE_TRIGGER as number,
+};
+
+/**
+ * Returns the confidence score threshold for triggering sleep detection
+ * @returns Value from _devOverrides in __DEV__ (DevTools can modify it); DETECTION.SLEEP_SCORE_TRIGGER in production
+ */
+export function getSleepScoreTrigger(): number {
+  return __DEV__ ? _devOverrides.sleepScoreTrigger : DETECTION.SLEEP_SCORE_TRIGGER;
+}

@@ -1,4 +1,20 @@
 /**
+ * usePlacement — Hook to manage phone placement selection (persisted across restarts)
+ *
+ * Responsible for:
+ * - Reading saved placements from AsyncStorage on mount
+ * - Toggling placements on/off, respecting the tier's maxPlacements limit
+ * - Ensuring at least 1 placement is always selected (cannot deselect all)
+ * - When at the cap and adding a new one: replaces the last placement (keeps the first as primary)
+ *
+ * Used by:
+ * - HomeScreen: displays the placement picker and passes placements to MonitoringScreen
+ * - OnboardingScreen: initial placement selection
+ *
+ * Notes:
+ * - Legacy migration: if AsyncStorage has an old string value (pre-multi-placement), wraps it in an array
+ * - Primary placement is placements[0] — always used for profile lookups and threshold
+ *
  * P.5 — usePlacement hook
  * Persists the user's selected phone placements to AsyncStorage so it
  * survives app restarts. Defaults to ['mattress'] on first launch.
@@ -6,12 +22,24 @@
  * P.10 — Multi-placement: stores an array of placements.
  * The number of selectable placements is gated by tier (maxPlacements).
  */
+// ─────────────────────────────────────────
+// Imports
+// ─────────────────────────────────────────
+
 import { useState, useEffect, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PLACEMENT_PROFILES, DEFAULT_PLACEMENT } from '../constants/config';
 import type { PhonePlacement } from '../models/Session';
 
+// ─────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────
+
 const PLACEMENTS_KEY = '@smart_nap_timer:phone_placements';
+
+// ─────────────────────────────────────────
+// Types / Interfaces
+// ─────────────────────────────────────────
 
 export interface UsePlacementResult {
   /** Currently selected placements (1-4 depending on tier) */
@@ -27,6 +55,14 @@ export interface UsePlacementResult {
   loading: boolean;
 }
 
+// ─────────────────────────────────────────
+// Hook
+// ─────────────────────────────────────────
+
+/**
+ * Hook to manage placements — read, save, and toggle placements by tier
+ * @returns placements, placement (primary), togglePlacement, setPlacements, profile, loading
+ */
 export function usePlacement(): UsePlacementResult {
   const [placements, setPlacementsState] = useState<PhonePlacement[]>([DEFAULT_PLACEMENT]);
   const [loading, setLoading] = useState(true);

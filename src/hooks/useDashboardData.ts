@@ -1,13 +1,36 @@
 /**
+ * useDashboardData — Hook that aggregates display data for DashboardScreen
+ *
+ * Responsible for:
+ * - Loading SessionStats and the session list to build chart data
+ * - Extracting the last 10 sessions to draw the latency chart (3.9)
+ * - Providing showInsufficientWarning when insufficient streak >= 3 (3.17)
+ * - Exposing refresh() for DashboardScreen's useFocusEffect to trigger a reload
+ *
+ * Used by:
+ * - DashboardScreen: stats, chartPoints, showInsufficientWarning, loading
+ *
+ * Notes:
+ * - tick state is the trigger mechanism: when refresh() is called, tick increments,
+ *   causing useEffect to re-run and reload data (instead of using a complex callback)
+ *
  * Tasks 3.9, 3.10, 3.17 — Dashboard real data hook
  * 3.9  Chart data from real sessionService.loadAll()
  * 3.10 Stats from sessionService.getStats()
  * 3.17 Insufficient streak warning (streak >= 3)
  */
+// ─────────────────────────────────────────
+// Imports
+// ─────────────────────────────────────────
+
 import { useState, useEffect, useCallback } from 'react';
 import { sessionService } from '../services/SessionService';
 import { SessionStats, NapSession } from '../models/Session';
 import { INSUFFICIENT } from '../constants/config';
+
+// ─────────────────────────────────────────
+// Types / Interfaces
+// ─────────────────────────────────────────
 
 export interface ChartPoint {
   session: number;
@@ -24,6 +47,14 @@ export interface DashboardData {
   refresh: () => void;
 }
 
+// ─────────────────────────────────────────
+// Hook
+// ─────────────────────────────────────────
+
+/**
+ * Hook that loads and processes dashboard data from sessionService
+ * @returns stats, chartPoints, showInsufficientWarning, isEmpty, loading, refresh
+ */
 export function useDashboardData(): DashboardData {
   const [stats, setStats] = useState<SessionStats | null>(null);
   const [chartPoints, setChartPoints] = useState<ChartPoint[]>([]);

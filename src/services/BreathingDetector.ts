@@ -1,4 +1,20 @@
 /**
+ * BreathingDetector — Analyses mic metering history to detect breathing patterns during sleep
+ *
+ * Responsible for:
+ * - Computing a quietness score: rewards dB levels in the sleeping range (-80 to -20 dB)
+ * - Computing a variance score: low variance = steady sound = regular breathing
+ * - Computing a rhythm score: checks whether peak spacing falls in the 12-24 BPM range
+ * - Combining these into a micScore (0-100) for ConfidenceEngine to compute the overall score
+ *
+ * Used by:
+ * - ConfidenceEngine: calls breathingDetector.analyze(micSamples) each eval cycle
+ *
+ * Notes:
+ * - Uses a 3-sample moving average to smooth the signal before peak detection
+ * - Requires at least MIN_SAMPLES (10) samples before analysis begins
+ * - Requires at least 20 samples for detectRhythm to operate
+ *
  * Task 2.4 — BreathingDetector
  *
  * Analyses mic metering history for rhythmic breathing patterns.
@@ -12,14 +28,26 @@
  * Final micScore = quietness*0.5 + variance*0.3 + rhythm*0.2
  */
 
+// ─────────────────────────────────────────
+// Imports
+// ─────────────────────────────────────────
+
 import { MicSample } from './MicService';
+
+// ─────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────
 
 // Breathing frequency bounds
 const BREATHING_MIN_PERIOD_MS = 2_500;  // 24 BPM
 const BREATHING_MAX_PERIOD_MS = 5_000;  // 12 BPM
 
-const ANALYSIS_WINDOW_MS = 60_000; // last 60 seconds
+const ANALYSIS_WINDOW_MS = 90_000; // last 90 seconds — more cycles for slow/deep breathers
 const MIN_SAMPLES = 10;
+
+// ─────────────────────────────────────────
+// Types / Interfaces
+// ─────────────────────────────────────────
 
 export interface BreathingResult {
   isBreathing: boolean;
@@ -52,11 +80,13 @@ class BreathingDetector {
     const varianceScore  = computeVarianceScore(arrayVariance(meterings));
     const { rhythmScore, breathingRate } = detectRhythm(window);
 
+    // Rhythm weighted highest: random noise has no 12-24 BPM rhythm, real breathing does.
+    // Quietness cut to 0.3: moderate ambient noise no longer dominates the score.
     const micScore = Math.round(
-      quietnessScore * 0.5 + varianceScore * 0.3 + rhythmScore * 0.2,
+      quietnessScore * 0.3 + varianceScore * 0.3 + rhythmScore * 0.4,
     );
     const clamped = Math.max(0, Math.min(100, micScore));
-    const isBreathing = clamped >= 50 && rhythmScore > 30;
+    const isBreathing = clamped >= 55 && rhythmScore > 35;
 
     return {
       isBreathing,
@@ -115,19 +145,29 @@ function computeVarianceScore(variance: number): number {
 function detectRhythm(
   samples: MicSample[],
 ): { rhythmScore: number; breathingRate: number | null } {
-  if (samples.length < 20) return { rhythmScore: 0, breathingRate: null };
+  // Need at least 30 samples (~15 seconds) before rhythm detection is reliable
+  if (samples.length < 30) return { rhythmScore: 0, breathingRate: null };
 
-  const smoothed = movingAverage(samples.map((s) => s.metering), 3);
+  // 5-sample moving average smooths out mic noise better than 3-sample
+  const smoothed = movingAverage(samples.map((s) => s.metering), 5);
 
-  // Collect timestamps of local maxima
+  // Prominence filter: only count peaks that stand at least 3 dB above the
+  // signal mean. A 1-dB noise fluctuation forming a local max is not breathing.
+  const signalMean = arrayMean(smoothed);
+  const MIN_PEAK_PROMINENCE_DB = 3;
+
+  // Collect timestamps of prominent local maxima
   const peakTimestamps: number[] = [];
   for (let i = 1; i < smoothed.length - 1; i++) {
-    if (smoothed[i] > smoothed[i - 1] && smoothed[i] > smoothed[i + 1]) {
+    if (smoothed[i] > smoothed[i - 1] &&
+        smoothed[i] > smoothed[i + 1] &&
+        smoothed[i] > signalMean + MIN_PEAK_PROMINENCE_DB) {
       peakTimestamps.push(samples[i].timestamp);
     }
   }
 
-  if (peakTimestamps.length < 3) return { rhythmScore: 0, breathingRate: null };
+  // Need at least 5 peaks → 4 intervals → at least 2 must be valid
+  if (peakTimestamps.length < 5) return { rhythmScore: 0, breathingRate: null };
 
   // Inter-peak intervals
   const intervals: number[] = [];
@@ -138,14 +178,17 @@ function detectRhythm(
   const valid = intervals.filter(
     (iv) => iv >= BREATHING_MIN_PERIOD_MS && iv <= BREATHING_MAX_PERIOD_MS,
   );
-  if (valid.length === 0) return { rhythmScore: 0, breathingRate: null };
+  // Require at least 2 valid intervals to confirm a genuine rhythm (not a single lucky gap)
+  if (valid.length < 2) return { rhythmScore: 0, breathingRate: null };
 
   const validRatio = valid.length / intervals.length;
   const avgInterval = arrayMean(valid);
   const ivVariance  = arrayVariance(valid);
 
-  // Consistency: lower variance relative to mean → more consistent rhythm
-  const consistencyFactor = Math.exp(-ivVariance / (avgInterval * avgInterval) * 10);
+  // Consistency: lower variance relative to mean → more consistent rhythm.
+  // Exponent 15 (up from 10) penalises irregular rhythms more strongly —
+  // real sleep breathing has <10% interval variation; random noise has >25%.
+  const consistencyFactor = Math.exp(-ivVariance / (avgInterval * avgInterval) * 15);
   const rhythmScore = Math.min(100, Math.round(validRatio * consistencyFactor * 100));
 
   return {
