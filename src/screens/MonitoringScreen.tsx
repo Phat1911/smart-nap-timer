@@ -43,6 +43,7 @@ import {
   TouchableOpacity,
   ScrollView,
 } from 'react-native';
+import * as Brightness from 'expo-brightness';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
@@ -62,6 +63,7 @@ import { usageService }                       from '../services/UsageService';
 import type { NapSession }                    from '../models/Session';
 
 const DND_PERMISSION_ASKED_KEY = '@smart_nap_timer:dnd_permission_asked';
+const MANUAL_TAP_DIM_BRIGHTNESS = 0.005;
 
 // ── Haptics shim (no static import — native module guard) ─────────────────────
 let Haptics: any;
@@ -100,13 +102,16 @@ export default function MonitoringScreen() {
   };
   const route      = useRoute<Route>();
   const { targetMinutes, placement, placements, maxFallAsleepMinutes } = route.params;
+  const originalBrightnessRef = useRef<number | null>(null);
+  const brightnessDimmedRef = useRef(false);
+  const [touchLocked, setTouchLocked] = useState(false);
 
   // ── Permissions (tasks 2.11–2.14, 2.16) ──────────────────────────────────
   const permissions = usePermissions();
 
   // ── Sleep detection (tasks 2.10, 2.22–2.24) ──────────────────────────────
   // P.4 — pass placement so ConfidenceEngine uses the correct profile weights
-  const { state, onManualTap } = useSleepDetection(targetMinutes, placement, placements);
+  const { state } = useSleepDetection(targetMinutes, placement, placements);
 
   // Guard: prevents double navigation if two timeout effects fire in rapid succession
   const navigatedRef = useRef(false);
@@ -143,6 +148,14 @@ export default function MonitoringScreen() {
         await AsyncStorage.setItem(DND_PERMISSION_ASKED_KEY, 'true').catch(() => {});
       }
     })();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (originalBrightnessRef.current !== null) {
+        Brightness.setBrightnessAsync(originalBrightnessRef.current).catch(() => {});
+      }
+    };
   }, []);
 
   // ── Gate: navigate back to Main if daily limit is reached ───────────────
@@ -263,6 +276,24 @@ export default function MonitoringScreen() {
     navigation.replace('Main');
   }
 
+  function handleManualTapBrightness() {
+    if (brightnessDimmedRef.current) return;
+    brightnessDimmedRef.current = true;
+    setTouchLocked(true);
+
+    (async () => {
+      try {
+        if (originalBrightnessRef.current === null) {
+          originalBrightnessRef.current = await Brightness.getBrightnessAsync();
+        }
+        await Brightness.setBrightnessAsync(MANUAL_TAP_DIM_BRIGHTNESS);
+      } catch {
+        brightnessDimmedRef.current = false;
+        setTouchLocked(false);
+      }
+    })();
+  }
+
   // ── Show permission wall if critical permissions are denied ───────────────
   const showPermissionWall =
     !permissions.requesting &&
@@ -291,6 +322,8 @@ export default function MonitoringScreen() {
 
   return (
     <SafeAreaView style={styles.root} edges={['top']}>
+      {touchLocked && <View style={styles.touchShield} pointerEvents="auto" />}
+
       {/* DND permission modal — shown once when permission hasn't been granted */}
       <Modal
         visible={showDndModal}
@@ -442,8 +475,8 @@ export default function MonitoringScreen() {
           </View>
         </View>
 
-        {/* Manual tap fallback (task 2.15) */}
-        <TouchableOpacity onPress={onManualTap} style={styles.tapFallbackBtn} activeOpacity={0.7}>
+        {/* Manual tap fallback (brightness dim only) */}
+        <TouchableOpacity onPress={handleManualTapBrightness} style={styles.tapFallbackBtn} activeOpacity={0.7}>
           <Text style={styles.tapFallbackText}>{Strings.monitoring_tap_fallback}</Text>
         </TouchableOpacity>
 
@@ -587,6 +620,11 @@ const styles = StyleSheet.create({
   placeDownText: {
     flex: 1, fontSize: 13, lineHeight: 18,
     color: Colors.on_surface, fontWeight: '500',
+  },
+
+  touchShield: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 999,
   },
 
   // Debug card (__DEV__ only)

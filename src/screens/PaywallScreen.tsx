@@ -54,8 +54,8 @@ type Route = RouteProp<RootStackParamList, 'Paywall'>;
 // TODO: Replace with your real Terms of Service URL before App Store submission
 const TERMS_URL = 'https://smartnaptimer.app/terms';
 const PRICE = {
-  pro: { vnd: '79.000 ₫', usd: '$2.99' },
-  max: { vnd: '169.000 ₫', usd: '$6.99' },
+  pro: { vnd: '59.000 ₫', usd: '$2.99' },
+  max: { vnd: '109.000 ₫', usd: '$6.99' },
 };
 
 
@@ -84,16 +84,24 @@ export default function PaywallScreen() {
   const mountedRef     = useRef(true);
   const isUpgradingRef = useRef(false);
 
+  // Initialize current tier on mount, with cleanup for unmount
+  // Also handles cancellation of any active PayOS polling
   useEffect(() => {
     mountedRef.current = true;
+    
+    // Fetch the current user's tier from the service
     tierService.getCurrentTier().then((t) => {
+      // Only update state if component is still mounted (prevents memory leak warnings)
       if (mountedRef.current) setCurrentTier(t);
     }).catch(() => {});
+    
+    // Cleanup on unmount
     return () => {
       mountedRef.current = false;
+      // If a PayOS polling interval is active, stop it
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, []);
+  }, []); // Run only once on mount
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 

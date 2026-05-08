@@ -210,7 +210,7 @@ export default function HomeScreen() {
           <View style={styles.streakDivider} />
 
           {/* Weekly goal */}
-          <View style={styles.streakCell}>
+          {/* <View style={styles.streakCell}>
             <Text style={styles.streakEmoji}>📅</Text>
             <Text style={styles.streakValue}>
               {streak.weeklyCount}
@@ -225,8 +225,8 @@ export default function HomeScreen() {
                 ]}
               />
             </View>
-          </View>
-        </View>
+          </View> */}
+        </View> 
 
         {/* Duration Selection */}
         <View style={styles.section}>
