@@ -48,6 +48,7 @@ import * as KeepAwake from 'expo-keep-awake';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { NativeModules } from 'react-native';
 import { NativeStackNavigationProp }          from '@react-navigation/native-stack';
 import { Colors }                             from '../constants';
 import { getSleepScoreTrigger }               from '../constants/config';
@@ -266,9 +267,16 @@ export default function MonitoringScreen() {
   useEffect(() => {
     notificationBlocker.block().catch(() => {});
     DndService.enable().catch(() => {});
+    // Start Android foreground service so monitoring is less likely to be killed
+    if (Platform.OS === 'android' && (NativeModules as any).NativeAlarm) {
+      (NativeModules as any).NativeAlarm.startForegroundService().catch(() => {});
+    }
     return () => {
       notificationBlocker.unblock().catch(() => {});
       DndService.disable().catch(() => {});
+      if (Platform.OS === 'android' && (NativeModules as any).NativeAlarm) {
+        (NativeModules as any).NativeAlarm.stopForegroundService().catch(() => {});
+      }
     };
   }, []);
 

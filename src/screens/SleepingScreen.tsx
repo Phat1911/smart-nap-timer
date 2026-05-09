@@ -38,6 +38,7 @@ import {
 import * as KeepAwake from 'expo-keep-awake';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { NativeModules, Platform } from 'react-native';
 import { NativeStackNavigationProp }          from '@react-navigation/native-stack';
 import { Colors }                             from '../constants';
 import { useLanguage }                        from '../contexts/LanguageContext';
@@ -98,6 +99,11 @@ export default function SleepingScreen() {
     // 5.2 — Record that a session has started (increments daily counter)
     usageService.recordSessionStart().catch(() => {});
 
+    // Start native foreground service on Android to keep monitoring alive
+    if (Platform.OS === 'android' && (NativeModules as any).NativeAlarm) {
+      (NativeModules as any).NativeAlarm.startForegroundService().catch(() => {});
+    }
+
     // Start white noise audio
     audioService.play('rain', INITIAL_VOLUME).catch(() => {});
 
@@ -144,6 +150,9 @@ export default function SleepingScreen() {
       if (intervalRef.current) clearInterval(intervalRef.current);
       audioService.stop().catch(() => {});
       alarmService.cancelAlarm().catch(() => {});
+      if (Platform.OS === 'android' && (NativeModules as any).NativeAlarm) {
+        (NativeModules as any).NativeAlarm.stopForegroundService().catch(() => {});
+      }
     };
   }, []);
 

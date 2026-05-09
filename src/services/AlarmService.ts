@@ -83,8 +83,18 @@ class AlarmService {
   async scheduleAlarm(delayMinutes: number): Promise<string | null> {
     const hasPermission = await this.requestPermission();
     if (!hasPermission) return null;
-
     await this.cancelAlarm();
+
+    // Prefer native AlarmManager on Android (fires even if app is killed).
+    if (Platform.OS === 'android' && (global as any).NativeModules?.NativeAlarm) {
+      try {
+        await (global as any).NativeModules.NativeAlarm.scheduleExactAlarm(delayMinutes);
+        this.scheduledId = 'native';
+        return this.scheduledId;
+      } catch (e) {
+        // fall back to expo-notifications below
+      }
+    }
 
     if (Platform.OS === 'android') {
       await Notifications.setNotificationChannelAsync('alarm', {
@@ -125,10 +135,22 @@ class AlarmService {
    * Cancels the previously scheduled notification (if any)
    */
   async cancelAlarm(): Promise<void> {
-    if (this.scheduledId) {
-      await Notifications.cancelScheduledNotificationAsync(this.scheduledId);
+    if (!this.scheduledId) return;
+    if (this.scheduledId === 'native' && (global as any).NativeModules?.NativeAlarm) {
+      try {
+        await (global as any).NativeModules.NativeAlarm.cancelAlarm();
+      } catch {
+        // ignore
+      }
       this.scheduledId = null;
+      return;
     }
+    try {
+      await Notifications.cancelScheduledNotificationAsync(this.scheduledId);
+    } catch {
+      // ignore
+    }
+    this.scheduledId = null;
   }
 
   async cancelAll(): Promise<void> {
