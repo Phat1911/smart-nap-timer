@@ -40,6 +40,7 @@ import {
   ScrollView,
   TouchableOpacity,
 } from 'react-native';
+import { NativeModules } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Audio } from 'expo-av';
 import { Asset } from 'expo-asset';
@@ -139,6 +140,9 @@ export default function WakeScreen() {
     if (s) {
       s.stopAsync().catch(() => {});
       s.unloadAsync().catch(() => {});
+    }
+    if ((NativeModules as any).NativeAlarm) {
+      (NativeModules as any).NativeAlarm.stopAlarm().catch(() => {});
     }
   }, []);
 

@@ -139,6 +139,7 @@ class AlarmService {
     if (this.scheduledId === 'native' && NativeModules.NativeAlarm) {
       try {
         await NativeModules.NativeAlarm.cancelAlarm();
+        await NativeModules.NativeAlarm.stopAlarm();
       } catch {
         // ignore
       }
@@ -155,6 +156,13 @@ class AlarmService {
 
   async cancelAll(): Promise<void> {
     await Notifications.cancelAllScheduledNotificationsAsync();
+    if (NativeModules.NativeAlarm) {
+      try {
+        await NativeModules.NativeAlarm.stopAlarm();
+      } catch {
+        // ignore
+      }
+    }
     this.scheduledId = null;
   }
 
