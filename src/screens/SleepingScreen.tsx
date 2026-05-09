@@ -47,6 +47,7 @@ import { audioService }                       from '../services/AudioService';
 import { alarmService }                       from '../services/AlarmService';
 import { sessionService }                     from '../services/SessionService';
 import { usageService }                       from '../services/UsageService';
+import { batteryOptimizationService }         from '../services/BatteryOptimizationService';
 import { useScreenDim }                       from '../hooks/useScreenDim';
 import type { NapSession }                    from '../models/Session';
 
@@ -164,6 +165,13 @@ export default function SleepingScreen() {
       KeepAwake.deactivateKeepAwake().catch(() => {});
     };
   }, []);
+
+  // ── Check battery optimization and show alert ─────────────────────────────
+  // Show alert once after nap starts to inform user about potential issues on
+  // aggressive battery optimization devices (Xiaomi/Redmi)
+  useEffect(() => {
+    batteryOptimizationService.checkAndShowAlert(Strings).catch(() => {});
+  }, [Strings]);
 
   // ── Volume change handler (task 2.20) ────────────────────────────────────
   const handleVolumeChange = useCallback((newVolume: number) => {

@@ -280,6 +280,13 @@ export const EN = {
   alarm_notification_title: 'Wake up!',
   alarm_notification_body: (minutes: number) => `Your ${minutes}-minute nap is complete.`,
 
+  // Battery optimization alert (Xiaomi/Redmi devices)
+  battery_optimization_alert_title: 'Battery Optimization Detected',
+  battery_optimization_alert_body:
+    'Your device has aggressive battery optimization enabled. This may prevent the alarm from firing when your phone is locked. For best results, disable battery optimization for Smart Nap Timer.',
+  battery_optimization_alert_settings: 'Open Settings',
+  battery_optimization_alert_dismiss: 'Maybe Later',
+
   // Paywall navigation reasons
   paywall_reason_export: 'Session export requires Max plan',
   paywall_reason_sound: (sound: string) => `${sound} sound requires a paid plan`,
@@ -658,6 +665,13 @@ export const VI: typeof EN = {
   // Alarm notification
   alarm_notification_title: 'Đã đến giờ thức dậy!',
   alarm_notification_body: (minutes: number) => `Giấc ngủ ${minutes} phút của bạn đã kết thúc.`,
+
+  // Battery optimization alert (Xiaomi/Redmi devices)
+  battery_optimization_alert_title: 'Phát hiện tối ưu hóa pin',
+  battery_optimization_alert_body:
+    'Thiết bị của bạn có tối ưu hóa pin tích cực. Điều này có thể ngăn báo thức phát khi điện thoại bị khóa. Để có kết quả tốt nhất, vô hiệu hóa tối ưu hóa pin cho Smart Nap Timer.',
+  battery_optimization_alert_settings: 'Mở Cài đặt',
+  battery_optimization_alert_dismiss: 'Lúc khác',
 
   // Paywall navigation reasons
   paywall_reason_export: 'Xuất dữ liệu yêu cầu gói Max',

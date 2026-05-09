@@ -109,7 +109,7 @@ class UsageService {
         ? undefined
         : `You've used all ${limit} nap${limit === 1 ? '' : 's'} for today on your ${tier} plan.`,
       currentCount: record.count,
-      limit: limit === Infinity ? 999 : limit,
+      limit: limit === Infinity ? 999999 : limit,
     };
   }
 

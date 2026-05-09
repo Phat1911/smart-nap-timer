@@ -72,7 +72,8 @@
         {
           "motionPermission": "Smart Nap Timer uses motion sensors to detect when you fall asleep."
         }
-      ]
+      ],
+      "expo-asset"
     ],
     "scheme": "smartnaptimer",
     "web": {
