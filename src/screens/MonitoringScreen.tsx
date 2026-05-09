@@ -44,6 +44,7 @@ import {
   ScrollView,
 } from 'react-native';
 import * as Brightness from 'expo-brightness';
+import * as KeepAwake from 'expo-keep-awake';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
@@ -155,6 +156,15 @@ export default function MonitoringScreen() {
       if (originalBrightnessRef.current !== null) {
         Brightness.setBrightnessAsync(originalBrightnessRef.current).catch(() => {});
       }
+    };
+  }, []);
+
+  // ── Keep screen awake during nap session ──────────────────────────────────
+  // Prevent phone from locking and suspend app during sleep detection
+  useEffect(() => {
+    KeepAwake.activateKeepAwakeAsync().catch(() => {});
+    return () => {
+      KeepAwake.deactivateKeepAwake().catch(() => {});
     };
   }, []);
 

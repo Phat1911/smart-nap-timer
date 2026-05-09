@@ -35,6 +35,7 @@ import {
   PanResponder,
   LayoutChangeEvent,
 } from 'react-native';
+import * as KeepAwake from 'expo-keep-awake';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp }          from '@react-navigation/native-stack';
@@ -143,6 +144,15 @@ export default function SleepingScreen() {
       if (intervalRef.current) clearInterval(intervalRef.current);
       audioService.stop().catch(() => {});
       alarmService.cancelAlarm().catch(() => {});
+    };
+  }, []);
+
+  // ── Keep screen awake during nap session ──────────────────────────────────
+  // Prevent phone from locking and suspend app during sleep
+  useEffect(() => {
+    KeepAwake.activateKeepAwakeAsync().catch(() => {});
+    return () => {
+      KeepAwake.deactivateKeepAwake().catch(() => {});
     };
   }, []);
 
