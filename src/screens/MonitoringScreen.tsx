@@ -59,6 +59,8 @@ import { usePermissions }                     from '../hooks/usePermissions';
 import { useTierGate }                        from '../hooks/useTierGate';
 import { PermissionDeniedCard }               from '../components/ui/PermissionDeniedCard';
 import { notificationBlocker }                from '../services/NotificationBlocker';
+import { alarmService }                       from '../services/AlarmService';
+import { batteryOptimizationService }         from '../services/BatteryOptimizationService';
 import DndService                             from '../services/DndService';
 import { sessionService }                     from '../services/SessionService';
 import { usageService }                       from '../services/UsageService';
@@ -167,6 +169,18 @@ export default function MonitoringScreen() {
     return () => {
       KeepAwake.deactivateKeepAwake().catch(() => {});
     };
+  }, []);
+
+  // ── Schedule alarm early as fallback + show battery alert ──────────────────
+  // If detection stalls (e.g., due to battery optimization), at least the alarm
+  // is already scheduled from when the user started the nap (now).
+  // Note: if detection succeeds and reaches SleepingScreen, the alarm will be
+  // scheduled again (which just updates it), but better safe than sorry.
+  useEffect(() => {
+    // Schedule alarm for the full targetMinutes duration (from now)
+    alarmService.scheduleAlarm(targetMinutes).catch(() => {});
+    // Show battery optimization alert if applicable (once per session)
+    batteryOptimizationService.checkAndShowAlert(Strings).catch(() => {});
   }, []);
 
   // ── Gate: navigate back to Main if daily limit is reached ───────────────
