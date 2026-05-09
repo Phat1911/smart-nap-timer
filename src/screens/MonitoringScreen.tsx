@@ -174,11 +174,12 @@ export default function MonitoringScreen() {
   // ── Schedule alarm early as fallback + show battery alert ──────────────────
   // If detection stalls (e.g., due to battery optimization), at least the alarm
   // is already scheduled from when the user started the nap (now).
+  // Schedule for maxFallAsleepMinutes so alarm fires if user doesn't fall asleep.
   // Note: if detection succeeds and reaches SleepingScreen, the alarm will be
-  // scheduled again (which just updates it), but better safe than sorry.
+  // scheduled again for the remaining targetMinutes (which just updates it).
   useEffect(() => {
-    // Schedule alarm for the full targetMinutes duration (from now)
-    alarmService.scheduleAlarm(targetMinutes).catch(() => {});
+    // Schedule alarm for the max fall-asleep duration
+    alarmService.scheduleAlarm(maxFallAsleepMinutes).catch(() => {});
     // Show battery optimization alert if applicable (once per session)
     batteryOptimizationService.checkAndShowAlert(Strings).catch(() => {});
   }, []);
