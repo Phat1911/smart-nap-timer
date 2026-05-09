@@ -61,11 +61,16 @@ if (!__DEV__) {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /** Returns the hour (0-23) that appears most often across sessions, or null. */
-function mostCommonHour(sessions: { hour: number }[]): number | null {
-  if (sessions.length < MIN_SESSIONS) return null;
+function mostCommonHour(sessions: { hour?: number }[]): number | null {
+  // Ignore sessions without a valid numeric hour (0-23).
+  const valid = sessions.filter(
+    (s) => typeof s.hour === 'number' && s.hour >= 0 && s.hour <= 23
+  );
+  if (valid.length < MIN_SESSIONS) return null;
   const tally: Record<number, number> = {};
-  for (const s of sessions) {
-    tally[s.hour] = (tally[s.hour] ?? 0) + 1;
+  for (const s of valid) {
+    const h = s.hour as number;
+    tally[h] = (tally[h] ?? 0) + 1;
   }
   let bestHour = -1;
   let bestCount = 0;
