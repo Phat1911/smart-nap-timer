@@ -23,7 +23,7 @@
 // Imports
 // ─────────────────────────────────────────
 
-import { Platform } from 'react-native';
+import { Platform, NativeModules } from 'react-native';
 import { ALARM_RAMP_SECONDS, SNOOZE_MINUTES } from '../constants/config';
 import { Strings } from '../constants/strings';
 
@@ -86,9 +86,9 @@ class AlarmService {
     await this.cancelAlarm();
 
     // Prefer native AlarmManager on Android (fires even if app is killed).
-    if (Platform.OS === 'android' && (global as any).NativeModules?.NativeAlarm) {
+    if (Platform.OS === 'android' && NativeModules.NativeAlarm) {
       try {
-        await (global as any).NativeModules.NativeAlarm.scheduleExactAlarm(delayMinutes);
+        await NativeModules.NativeAlarm.scheduleExactAlarm(delayMinutes);
         this.scheduledId = 'native';
         return this.scheduledId;
       } catch (e) {
@@ -136,9 +136,9 @@ class AlarmService {
    */
   async cancelAlarm(): Promise<void> {
     if (!this.scheduledId) return;
-    if (this.scheduledId === 'native' && (global as any).NativeModules?.NativeAlarm) {
+    if (this.scheduledId === 'native' && NativeModules.NativeAlarm) {
       try {
-        await (global as any).NativeModules.NativeAlarm.cancelAlarm();
+        await NativeModules.NativeAlarm.cancelAlarm();
       } catch {
         // ignore
       }
