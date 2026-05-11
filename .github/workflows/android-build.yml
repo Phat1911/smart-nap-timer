@@ -21,6 +21,9 @@ jobs:
       - name: Install npm dependencies
         run: npm install
 
+      - name: Generate native Android code with Expo
+        run: npx expo prebuild --platform android --clean
+
       - name: Setup JDK
         uses: actions/setup-java@v4
         with:
