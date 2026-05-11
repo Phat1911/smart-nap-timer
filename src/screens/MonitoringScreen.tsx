@@ -59,6 +59,7 @@ import { PermissionDeniedCard }               from '../components/ui/PermissionD
 import { notificationBlocker }                from '../services/NotificationBlocker';
 import DndService                             from '../services/DndService';
 import { alarmService }                       from '../services/AlarmService';
+import { napDetectionServiceBridge }          from '../services/NapDetectionServiceBridge';
 import { sessionService }                     from '../services/SessionService';
 import { usageService }                       from '../services/UsageService';
 import type { NapSession }                    from '../models/Session';
@@ -127,6 +128,9 @@ export default function MonitoringScreen() {
       detectionMethod: state.detectionMethod,
       confidenceScore: state.confidence,
     }).catch(() => {});
+
+    // Start foreground service to keep detector running in background
+    napDetectionServiceBridge.start().catch(() => {});
 
     return () => {
       alarmService.cancelAlarm().catch(() => {});

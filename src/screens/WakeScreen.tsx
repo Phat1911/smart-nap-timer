@@ -51,6 +51,7 @@ import { useLanguage } from '../contexts/LanguageContext';
 import { useTopRight } from '../contexts/TopRightContext';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { alarmService } from '../services/AlarmService';
+import { napDetectionServiceBridge } from '../services/NapDetectionServiceBridge';
 import { SNOOZE_MINUTES, ALARM_RAMP_SECONDS, ALARM_SOUNDS } from '../constants/config';
 import { getAlarmSound } from '../services/SettingsService';
 import { customSoundService } from '../services/CustomSoundService';
@@ -203,6 +204,7 @@ export default function WakeScreen() {
   useEffect(() => {
     mountedRef.current = true;
     alarmService.cancelAll().catch(() => {});
+    napDetectionServiceBridge.stop().catch(() => {});
     startAlarm();
     return () => {
       mountedRef.current = false;
