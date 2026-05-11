@@ -4,6 +4,9 @@
  * Provides JS interface to start/stop the foreground service that keeps
  * the app process alive during monitoring/sleeping phases.
  *
+ * The native module is auto-registered by the withNapDetectionService config plugin
+ * during expo prebuild / eas build.
+ *
  * Usage:
  *   - MonitoringScreen.tsx: Call napDetectionServiceBridge.start() on mount
  *   - SleepingScreen.tsx: Optionally continue or stop
@@ -19,20 +22,29 @@ interface INapDetectionServiceBridge {
 }
 
 class NapDetectionServiceBridge implements INapDetectionServiceBridge {
+  private getModule() {
+    try {
+      return NativeModules.NapDetectionServiceModule;
+    } catch (error) {
+      console.warn('[NapDetectionServiceBridge] Module not available:', error);
+      return null;
+    }
+  }
+
   /**
    * Start the foreground service.
    * On Android: launches NapDetectionService with foreground notification + WakeLock.
    * On iOS: no-op (iOS handles background execution differently).
+   * Gracefully handles missing module (dev/testing scenarios).
    */
   async start(): Promise<void> {
     if (Platform.OS !== 'android') {
       return;
     }
     try {
-      // Use the native module to start the service
-      const { NapDetectionServiceModule } = NativeModules;
-      if (NapDetectionServiceModule && NapDetectionServiceModule.startService) {
-        await NapDetectionServiceModule.startService();
+      const module = this.getModule();
+      if (module && module.startService) {
+        await module.startService();
       }
     } catch (error) {
       console.warn('[NapDetectionServiceBridge] start() error:', error);
@@ -49,9 +61,9 @@ class NapDetectionServiceBridge implements INapDetectionServiceBridge {
       return;
     }
     try {
-      const { NapDetectionServiceModule } = NativeModules;
-      if (NapDetectionServiceModule && NapDetectionServiceModule.stopService) {
-        await NapDetectionServiceModule.stopService();
+      const module = this.getModule();
+      if (module && module.stopService) {
+        await module.stopService();
       }
     } catch (error) {
       console.warn('[NapDetectionServiceBridge] stop() error:', error);
@@ -66,9 +78,9 @@ class NapDetectionServiceBridge implements INapDetectionServiceBridge {
       return false;
     }
     try {
-      const { NapDetectionServiceModule } = NativeModules;
-      if (NapDetectionServiceModule && NapDetectionServiceModule.isServiceRunning) {
-        return await NapDetectionServiceModule.isServiceRunning();
+      const module = this.getModule();
+      if (module && module.isServiceRunning) {
+        return await module.isServiceRunning();
       }
     } catch (error) {
       console.warn('[NapDetectionServiceBridge] isRunning() error:', error);
