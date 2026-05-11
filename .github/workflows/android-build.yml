@@ -33,19 +33,24 @@ jobs:
           export ANDROID_SDK_ROOT=$HOME/Android/Sdk
           mkdir -p $ANDROID_SDK_ROOT/cmdline-tools
           cd $HOME
-          if [ ! -f commandlinetools.zip ]; then
-            curl -sS -o commandlinetools.zip https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
-          fi
+          curl -sS -o commandlinetools.zip https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
           unzip -q -o commandlinetools.zip -d $ANDROID_SDK_ROOT/cmdline-tools
           mkdir -p $ANDROID_SDK_ROOT/cmdline-tools/latest
           mv $ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools/* $ANDROID_SDK_ROOT/cmdline-tools/latest/ || true
           export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+          echo "PATH=$PATH" >> $GITHUB_ENV
           yes | sdkmanager --licenses || true
           sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.2"
 
+      - name: Verify directories and setup
+        run: |
+          pwd
+          ls -la
+          ls -la android/ || echo "android folder not found!"
+          chmod +x android/gradlew
+
       - name: Build debug APK
-        env:
-          ANDROID_SDK_ROOT: $HOME/Android/Sdk
         run: |
           set -e
           cd android
