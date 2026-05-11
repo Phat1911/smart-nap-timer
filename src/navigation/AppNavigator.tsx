@@ -37,6 +37,8 @@ import DashboardScreen from '../screens/DashboardScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import OnboardingScreen from '../screens/OnboardingScreen';
 import { Colors } from '../constants';
+import { navigationRef } from './navigationRef';
+import { wakeFlowService } from '../services/WakeFlowService';
 
 // ─────────────────────────────────────────
 // Types / Interfaces
@@ -120,7 +122,12 @@ function MainTabs() {
  */
 export default function AppNavigator() {
   return (
-    <NavigationContainer>
+    <NavigationContainer
+      ref={navigationRef}
+      onReady={() => {
+        wakeFlowService.consumePendingWakeIntent().catch(() => {});
+      }}
+    >
       <Stack.Navigator
         initialRouteName="Onboarding"
         screenOptions={{

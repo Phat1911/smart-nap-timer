@@ -58,6 +58,7 @@ import { useTierGate }                        from '../hooks/useTierGate';
 import { PermissionDeniedCard }               from '../components/ui/PermissionDeniedCard';
 import { notificationBlocker }                from '../services/NotificationBlocker';
 import DndService                             from '../services/DndService';
+import { alarmService }                       from '../services/AlarmService';
 import { sessionService }                     from '../services/SessionService';
 import { usageService }                       from '../services/UsageService';
 import type { NapSession }                    from '../models/Session';
@@ -115,6 +116,24 @@ export default function MonitoringScreen() {
 
   // Guard: prevents double navigation if two timeout effects fire in rapid succession
   const navigatedRef = useRef(false);
+
+  useEffect(() => {
+    alarmService.scheduleAlarm(maxFallAsleepMinutes, {
+      kind: 'monitoring_timeout',
+      targetMinutes,
+      placement,
+      placements,
+      maxFallAsleepMinutes,
+      detectionMethod: state.detectionMethod,
+      confidenceScore: state.confidence,
+    }).catch(() => {});
+
+    return () => {
+      alarmService.cancelAlarm().catch(() => {});
+    };
+    // The nap params do not change while this screen is active.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // "Put phone down" hint — shown once when hand placement confidence reaches 65%
   const [showPlaceDownHint, setShowPlaceDownHint] = useState(false);
@@ -174,6 +193,7 @@ export default function MonitoringScreen() {
     if (navigatedRef.current) return;
     if (state.isDetected) {
       navigatedRef.current = true;
+      alarmService.cancelAlarm().catch(() => {});
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       navigation.replace('Sleeping', {
         targetMinutes,
@@ -190,6 +210,7 @@ export default function MonitoringScreen() {
   function handleManualTapStart() {
     if (navigatedRef.current) return;
     navigatedRef.current = true;
+    alarmService.cancelAlarm().catch(() => {});
     onManualTap();
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     navigation.replace('Sleeping', {
@@ -291,6 +312,7 @@ export default function MonitoringScreen() {
   function handleCancel() {
     // P.11 -- unblock is handled by the useEffect cleanup on unmount;
     // do NOT call it here to avoid a race with the new screen's block().
+    alarmService.cancelAlarm().catch(() => {});
     navigation.replace('Main');
   }
 

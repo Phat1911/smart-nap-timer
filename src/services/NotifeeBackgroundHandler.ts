@@ -17,6 +17,7 @@
  */
 
 import notifee, { EventType } from '@notifee/react-native';
+import { wakeFlowService } from './WakeFlowService';
 
 class NotifeeBackgroundHandler {
   private isListenerSetup = false;
@@ -31,12 +32,12 @@ class NotifeeBackgroundHandler {
 
     // Listen to foreground notifications (app open or in background)
     notifee.onForegroundEvent(({ type, detail }) => {
-      this.handleNotificationEvent(type, detail);
+      void this.handleNotificationEvent(type, detail);
     });
 
     // Listen to background notifications (when user taps notification or alarm fires while app closed)
     notifee.onBackgroundEvent(async ({ type, detail }) => {
-      this.handleNotificationEvent(type, detail);
+      await this.handleNotificationEvent(type, detail);
     });
 
     console.log('✓ Notifee background handlers setup complete');
@@ -45,17 +46,21 @@ class NotifeeBackgroundHandler {
   /**
    * Handles all notification events
    */
-  private handleNotificationEvent(type: EventType, detail: any): void {
+  private async handleNotificationEvent(type: EventType, detail: any): Promise<void> {
     const { notification, pressAction } = detail;
 
-    // When the notification is displayed in foreground
-    if (type === EventType.FOREGROUND_EVENT) {
+    if (type === EventType.DELIVERED) {
+      await this.handleAlarmDelivered(notification);
+    }
+
+    // When the notification is delivered to the device
+    if (type === EventType.DELIVERED) {
       console.log('🔔 Alarm notification displayed (foreground)');
       console.log('🔊 Android notification system is playing alarm sound');
     }
 
     // When user opens the notification (app was closed or in background)
-    if (type === EventType.NOTIFICATION_OPENED) {
+    if (type === EventType.PRESS) {
       console.log('👆 User opened alarm notification');
       this.onAlarmOpened();
     }
@@ -68,6 +73,20 @@ class NotifeeBackgroundHandler {
         console.log('❌ User dismissed alarm');
         this.onAlarmDismissed();
       }
+    }
+  }
+
+  private async handleAlarmDelivered(notification: any): Promise<void> {
+    try {
+      const rawIntent = notification?.data?.wakeIntent;
+      if (!rawIntent || typeof rawIntent !== 'string') return;
+
+      const parsed = JSON.parse(rawIntent);
+      await wakeFlowService.queuePendingWakeIntent(parsed);
+      await wakeFlowService.consumePendingWakeIntent();
+      console.log('✓ Wake intent queued from delivered alarm notification');
+    } catch (error) {
+      console.error('Failed handling delivered alarm notification:', error);
     }
   }
 

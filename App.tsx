@@ -77,6 +77,7 @@ import { tierService } from './src/services/TierService';
 import { scheduleSmartNudge } from './src/services/SmartNotificationService';
 import { alarmService } from './src/services/AlarmService';
 import { notifeeBackgroundHandler } from './src/services/NotifeeBackgroundHandler';
+import { wakeFlowService } from './src/services/WakeFlowService';
 import { LanguageProvider } from './src/contexts/LanguageContext';
 import { TopRightProvider, useTopRight } from './src/contexts/TopRightContext';
 import LangToggleButton from './src/components/ui/LangToggleButton';
@@ -177,6 +178,7 @@ export default function App() {
           .then((userId) => tierService.fetchTierFromServer(userId))
           .catch(() => {});
         scheduleSmartNudge().catch(() => {});
+        wakeFlowService.consumePendingWakeIntent().catch(() => {});
       }
     });
     return () => sub.remove();

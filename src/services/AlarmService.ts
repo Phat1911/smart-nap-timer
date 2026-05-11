@@ -17,6 +17,7 @@
  * - Provides automatic wake-up when alarm fires
  *
  * Used by:
+ * - MonitoringScreen: scheduleAlarm() when nap monitoring starts (max fall-asleep timeout)
  * - SleepingScreen: scheduleAlarm() when the countdown starts, cancelAlarm() on unmount
  * - WakeScreen: cancelAll() when the user has woken up
  *
@@ -31,9 +32,11 @@
 // ─────────────────────────────────────────
 
 import { Platform } from 'react-native';
-import notifee, { TimestampTrigger, TriggerType } from '@notifee/react-native';
+import notifee, { AndroidCategory, AndroidImportance, TimestampTrigger, TriggerType } from '@notifee/react-native';
 import { ALARM_RAMP_SECONDS, SNOOZE_MINUTES } from '../constants/config';
 import { Strings } from '../constants/strings';
+import type { WakeAlarmIntent } from './WakeFlowService';
+import { wakeFlowService } from './WakeFlowService';
 
 // ─────────────────────────────────────────
 // Constants
@@ -106,7 +109,7 @@ class AlarmService {
    * @param delayMinutes - Number of minutes before the alarm fires
    * @returns The scheduled notification ID, or null if failed
    */
-  async scheduleAlarm(delayMinutes: number): Promise<string | null> {
+  async scheduleAlarm(delayMinutes: number, wakeIntent?: WakeAlarmIntent): Promise<string | null> {
     try {
       const hasPermission = await this.requestPermission();
       if (!hasPermission) {
@@ -127,11 +130,17 @@ class AlarmService {
         {
           title: Strings.alarm_notification_title,
           body: Strings.alarm_notification_body(delayMinutes),
+          data: wakeIntent ? { wakeIntent: JSON.stringify(wakeIntent) } : undefined,
           android: {
             channelId: ALARM_CHANNEL_ID,
             sound: 'alarm', // Will play the alarm.wav sound
+            category: AndroidCategory.ALARM,
+            importance: AndroidImportance.HIGH,
             pressAction: {
               id: 'default',
+            },
+            fullScreenAction: {
+              id: 'wake-full-screen',
             },
             actions: [
               {
@@ -172,6 +181,7 @@ class AlarmService {
       if (this.scheduledId) {
         await notifee.cancelTriggerNotification(this.scheduledId);
         this.scheduledId = null;
+        await wakeFlowService.clearPendingWakeIntent();
         console.log('✓ Alarm cancelled');
       }
     } catch (error) {

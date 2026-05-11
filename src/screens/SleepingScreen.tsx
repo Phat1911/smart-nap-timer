@@ -47,6 +47,7 @@ import { sessionService }                     from '../services/SessionService';
 import { usageService }                       from '../services/UsageService';
 import { useScreenDim }                       from '../hooks/useScreenDim';
 import type { NapSession }                    from '../models/Session';
+import type { WakeAlarmIntent }               from '../services/WakeFlowService';
 
 // ─────────────────────────────────────────
 // Types / Interfaces
@@ -101,7 +102,18 @@ export default function SleepingScreen() {
     audioService.play('rain', INITIAL_VOLUME).catch(() => {});
 
     // Schedule a notification alarm as a safety net (in case app is killed)
-    alarmService.scheduleAlarm(targetMinutes).catch(() => {});
+    const wakeIntent: WakeAlarmIntent = {
+      kind: 'sleeping_timeout',
+      sessionId: `session_${sleepStartTime}`,
+      targetMinutes,
+      sleepStartTime,
+      placement,
+      placements: routePlacements && routePlacements.length > 0 ? routePlacements : [placement],
+      latencySeconds,
+      detectionMethod,
+      confidenceScore,
+    };
+    alarmService.scheduleAlarm(targetMinutes, wakeIntent).catch(() => {});
 
     // Countdown
     intervalRef.current = setInterval(() => {
