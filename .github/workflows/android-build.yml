@@ -13,6 +13,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Generate native Android code
+        run: npx expo prebuild --platform android --clean --non-interactive
+
       - name: Setup JDK
         uses: actions/setup-java@v4
         with:
@@ -21,6 +32,11 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Verify generated android folder
+        run: |
+          ls -la
+          ls -la android/
 
       - name: Build debug APK
         run: |
