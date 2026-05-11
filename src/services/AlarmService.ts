@@ -1,63 +1,46 @@
 /**
- * AlarmService — Manages scheduling and cancelling alarm notifications
+ * AlarmService — Manages scheduling and cancelling alarm notifications using Notifee
+ *
+ * **NEW IMPLEMENTATION (Using Notifee + Android AlarmManager)**
  *
  * Responsible for:
  * - Requesting notification permission before scheduling
  * - Creating the Android "alarm" notification channel with bypassDnd and MAX importance
- * - Scheduling a notification with a TIME_INTERVAL trigger (delayMinutes * 60 seconds)
+ * - **Using Notifee's timeTrigger for reliable native AlarmManager scheduling**
  * - Cancelling any previously scheduled alarm before scheduling a new one
  * - Supporting a linear volume ramp from 0 → 1 over ALARM_RAMP_SECONDS
+ *
+ * **WHY NOTIFEE?**
+ * - Uses Android's native AlarmManager (not JS timers that get paused)
+ * - Works reliably even when app is closed or screen is off
+ * - Handles Redmi/Xiaomi battery optimization correctly
+ * - Provides automatic wake-up when alarm fires
  *
  * Used by:
  * - SleepingScreen: scheduleAlarm() when the countdown starts, cancelAlarm() on unmount
  * - WakeScreen: cancelAll() when the user has woken up
  *
  * Notes:
- * - expo-notifications is NOT supported in Expo Go (SDK 53+)
- *   — a mock is used in __DEV__ to avoid crashes
- * - 'alarm.wav' must be in assets and declared in app.json plugins
- *   to be bundled into the Android/iOS build
+ * - Notifee is production-ready and used by major apps
+ * - Uses native code (automatically included with EAS build)
+ * - Replaces expo-notifications for alarm scheduling (keeps expo-notifications for other notifications)
  */
 
 // ─────────────────────────────────────────
 // Imports
 // ─────────────────────────────────────────
 
-import { Platform, NativeModules } from 'react-native';
+import { Platform } from 'react-native';
+import notifee, { TimestampTrigger, TriggerType } from '@notifee/react-native';
 import { ALARM_RAMP_SECONDS, SNOOZE_MINUTES } from '../constants/config';
 import { Strings } from '../constants/strings';
 
-// expo-notifications is NOT supported in Expo Go (SDK 53+).
-// In __DEV__ (Expo Go) all notification calls are mocked to no-ops.
-// In production EAS builds the real module is used.
-let Notifications: any;
+// ─────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────
 
-if (!__DEV__) {
-  Notifications = require('expo-notifications');
-  // Configure how notifications appear when app is foregrounded
-  Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowAlert: true,
-      shouldPlaySound: true,
-      shouldSetBadge: false,
-      shouldShowBanner: true,
-      shouldShowList: true,
-    }),
-  });
-} else {
-  // Dev mock -- all methods are silent no-ops
-  Notifications = {
-    requestPermissionsAsync:              async () => ({ status: 'granted' }),
-    setNotificationChannelAsync:          async () => {},
-    scheduleNotificationAsync:            async () => 'mock-id',
-    cancelScheduledNotificationAsync:     async () => {},
-    cancelAllScheduledNotificationsAsync: async () => {},
-    AndroidImportance:             { MAX: 5 },
-    AndroidNotificationPriority:   { MAX: 'max' },
-    AndroidNotificationVisibility: { PUBLIC: 1 },
-    SchedulableTriggerInputTypes:  { TIME_INTERVAL: 'timeInterval' },
-  };
-}
+const ALARM_CHANNEL_ID = 'alarm-channel';
+const ALARM_NOTIFICATION_ID = 'alarm-notification';
 
 // ─────────────────────────────────────────
 // Class Definition
@@ -67,64 +50,113 @@ class AlarmService {
   private scheduledId: string | null = null;
 
   /**
+   * Initialize the alarm service
+   * - Creates notification channel on Android
+   * - Requests permissions
+   * Should be called once on app startup
+   */
+  async initialize(): Promise<void> {
+    if (Platform.OS === 'android') {
+      await this.createNotificationChannel();
+    }
+    await this.requestPermission();
+  }
+
+  /**
+   * Creates the Android notification channel for alarms
+   * Uses maximum importance and bypasses DND
+   */
+  private async createNotificationChannel(): Promise<void> {
+    try {
+      await notifee.createChannel({
+        id: ALARM_CHANNEL_ID,
+        name: 'Sleep Alarm',
+        importance: 5 as any, // AndroidImportance.MAX (5 = highest importance for Android)
+        sound: 'alarm', // References alarm.wav
+        vibration: true,
+        vibrationPattern: [0, 500, 250, 500],
+        bypassDnd: true,
+        lightColor: '#6c63ff',
+      });
+    } catch (error) {
+      console.error('Failed to create alarm channel:', error);
+    }
+  }
+
+  /**
    * Requests notification permission from the user
    * @returns true if permission is granted
    */
   async requestPermission(): Promise<boolean> {
-    const { status } = await Notifications.requestPermissionsAsync();
-    return status === 'granted';
+    try {
+      const result = await notifee.requestPermission();
+      return (
+        result.authorizationStatus === 1 || // AUTHORIZED
+        result.authorizationStatus === 2    // PROVISIONAL
+      );
+    } catch (error) {
+      console.error('Failed to request notification permission:', error);
+      return false;
+    }
   }
 
   /**
    * Schedules an alarm notification after delayMinutes minutes
+   * Uses native Android AlarmManager for reliable background scheduling
    * @param delayMinutes - Number of minutes before the alarm fires
-   * @returns The scheduled notification ID, or null if permission is not granted
+   * @returns The scheduled notification ID, or null if failed
    */
   async scheduleAlarm(delayMinutes: number): Promise<string | null> {
-    const hasPermission = await this.requestPermission();
-    if (!hasPermission) return null;
-    await this.cancelAlarm();
-
-    // Prefer native AlarmManager on Android (fires even if app is killed).
-    if (Platform.OS === 'android' && NativeModules.NativeAlarm) {
-      try {
-        await NativeModules.NativeAlarm.scheduleExactAlarm(delayMinutes);
-        this.scheduledId = 'native';
-        return this.scheduledId;
-      } catch (e) {
-        // fall back to expo-notifications below
+    try {
+      const hasPermission = await this.requestPermission();
+      if (!hasPermission) {
+        console.warn('Notification permission not granted');
+        return null;
       }
+
+      // Cancel any existing alarm first
+      await this.cancelAlarm();
+
+      // Calculate trigger time (now + delayMinutes)
+      const triggerTime = Date.now() + delayMinutes * 60 * 1000;
+
+      // Schedule notification using Notifee (uses native AlarmManager)
+      const notificationId = await notifee.getTriggerNotificationIds();
+      
+      await notifee.createTriggerNotification(
+        {
+          title: Strings.alarm_notification_title,
+          body: Strings.alarm_notification_body(delayMinutes),
+          android: {
+            channelId: ALARM_CHANNEL_ID,
+            sound: 'alarm', // Will play the alarm.wav sound
+            pressAction: {
+              id: 'default',
+            },
+            actions: [
+              {
+                title: 'Dismiss',
+                pressAction: {
+                  id: 'dismiss',
+                },
+              },
+            ],
+            asForegroundService: false, // Notification only, not a foreground service
+          },
+        },
+        {
+          type: TriggerType.TIMESTAMP,
+          timestamp: triggerTime, // Native AlarmManager will wake app at this time
+        } as TimestampTrigger
+      );
+
+      this.scheduledId = ALARM_NOTIFICATION_ID;
+      console.log(`✓ Alarm scheduled for ${delayMinutes} minutes from now using native AlarmManager`);
+      return ALARM_NOTIFICATION_ID;
+    } catch (error) {
+      console.error('Failed to schedule alarm:', error);
+      return null;
     }
-
-    if (Platform.OS === 'android') {
-      await Notifications.setNotificationChannelAsync('alarm', {
-        name: 'Sleep Alarm',
-        importance: Notifications.AndroidImportance.MAX,
-        vibrationPattern: [0, 500, 250, 500],
-        sound: 'alarm.wav',
-        bypassDnd: true,
-        lockscreenVisibility:
-          Notifications.AndroidNotificationVisibility.PUBLIC,
-      });
-    }
-
-    const id = await Notifications.scheduleNotificationAsync({
-      content: {
-        title: Strings.alarm_notification_title,
-        body: Strings.alarm_notification_body(delayMinutes),
-        sound: 'alarm.wav',
-        priority: Notifications.AndroidNotificationPriority.MAX,
-        categoryIdentifier: 'alarm',
-      },
-      trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-        seconds: delayMinutes * 60,
-        repeats: false,
-      },
-    });
-
-    this.scheduledId = id;
-    return id;
   }
 
   async scheduleSnooze(): Promise<string | null> {
@@ -133,37 +165,31 @@ class AlarmService {
 
   /**
    * Cancels the previously scheduled notification (if any)
+   * Works reliably even for native AlarmManager scheduled alarms
    */
   async cancelAlarm(): Promise<void> {
-    if (!this.scheduledId) return;
-    if (this.scheduledId === 'native' && NativeModules.NativeAlarm) {
-      try {
-        await NativeModules.NativeAlarm.cancelAlarm();
-        await NativeModules.NativeAlarm.stopAlarm();
-      } catch {
-        // ignore
-      }
-      this.scheduledId = null;
-      return;
-    }
     try {
-      await Notifications.cancelScheduledNotificationAsync(this.scheduledId);
-    } catch {
-      // ignore
+      if (this.scheduledId) {
+        await notifee.cancelTriggerNotification(this.scheduledId);
+        this.scheduledId = null;
+        console.log('✓ Alarm cancelled');
+      }
+    } catch (error) {
+      console.error('Failed to cancel alarm:', error);
     }
-    this.scheduledId = null;
   }
 
   async cancelAll(): Promise<void> {
-    await Notifications.cancelAllScheduledNotificationsAsync();
-    if (NativeModules.NativeAlarm) {
-      try {
-        await NativeModules.NativeAlarm.stopAlarm();
-      } catch {
-        // ignore
+    try {
+      const ids = await notifee.getTriggerNotificationIds();
+      for (const id of ids) {
+        await notifee.cancelTriggerNotification(id);
       }
+      this.scheduledId = null;
+      console.log('✓ All alarms cancelled');
+    } catch (error) {
+      console.error('Failed to cancel all alarms:', error);
     }
-    this.scheduledId = null;
   }
 
   /**

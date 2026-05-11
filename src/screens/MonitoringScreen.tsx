@@ -44,11 +44,9 @@ import {
   ScrollView,
 } from 'react-native';
 import * as Brightness from 'expo-brightness';
-import * as KeepAwake from 'expo-keep-awake';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
-import { NativeModules } from 'react-native';
 import { NativeStackNavigationProp }          from '@react-navigation/native-stack';
 import { Colors }                             from '../constants';
 import { getSleepScoreTrigger }               from '../constants/config';
@@ -59,8 +57,6 @@ import { usePermissions }                     from '../hooks/usePermissions';
 import { useTierGate }                        from '../hooks/useTierGate';
 import { PermissionDeniedCard }               from '../components/ui/PermissionDeniedCard';
 import { notificationBlocker }                from '../services/NotificationBlocker';
-import { alarmService }                       from '../services/AlarmService';
-import { batteryOptimizationService }         from '../services/BatteryOptimizationService';
 import DndService                             from '../services/DndService';
 import { sessionService }                     from '../services/SessionService';
 import { usageService }                       from '../services/UsageService';
@@ -115,7 +111,7 @@ export default function MonitoringScreen() {
 
   // ── Sleep detection (tasks 2.10, 2.22–2.24) ──────────────────────────────
   // P.4 — pass placement so ConfidenceEngine uses the correct profile weights
-  const { state } = useSleepDetection(targetMinutes, placement, placements);
+  const { state, onManualTap } = useSleepDetection(targetMinutes, placement, placements);
 
   // Guard: prevents double navigation if two timeout effects fire in rapid succession
   const navigatedRef = useRef(false);
@@ -162,28 +158,6 @@ export default function MonitoringScreen() {
     };
   }, []);
 
-  // ── Keep screen awake during nap session ──────────────────────────────────
-  // Prevent phone from locking and suspend app during sleep detection
-  useEffect(() => {
-    KeepAwake.activateKeepAwakeAsync().catch(() => {});
-    return () => {
-      KeepAwake.deactivateKeepAwake().catch(() => {});
-    };
-  }, []);
-
-  // ── Schedule alarm early as fallback + show battery alert ──────────────────
-  // If detection stalls (e.g., due to battery optimization), at least the alarm
-  // is already scheduled from when the user started the nap (now).
-  // Schedule for maxFallAsleepMinutes so alarm fires if user doesn't fall asleep.
-  // Note: if detection succeeds and reaches SleepingScreen, the alarm will be
-  // scheduled again for the remaining targetMinutes (which just updates it).
-  useEffect(() => {
-    // Schedule alarm for the max fall-asleep duration
-    alarmService.scheduleAlarm(maxFallAsleepMinutes).catch(() => {});
-    // Show battery optimization alert if applicable (once per session)
-    batteryOptimizationService.checkAndShowAlert(Strings).catch(() => {});
-  }, []);
-
   // ── Gate: navigate back to Main if daily limit is reached ───────────────
   useEffect(() => {
     // checking=true means the async check is still in-flight -- wait for it
@@ -197,7 +171,9 @@ export default function MonitoringScreen() {
 
   // ── Navigate to Sleeping when sleep is detected (task 2.10) ──────────────
   useEffect(() => {
+    if (navigatedRef.current) return;
     if (state.isDetected) {
+      navigatedRef.current = true;
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       navigation.replace('Sleeping', {
         targetMinutes,
@@ -209,7 +185,23 @@ export default function MonitoringScreen() {
         confidenceScore: state.confidence,
       });
     }
-  }, [state.isDetected]);
+  }, [state.isDetected, targetMinutes, placement, placements, navigation, state.elapsedSeconds, state.detectionMethod, state.confidence]);
+
+  function handleManualTapStart() {
+    if (navigatedRef.current) return;
+    navigatedRef.current = true;
+    onManualTap();
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    navigation.replace('Sleeping', {
+      targetMinutes,
+      sleepStartTime: Date.now(),
+      placement,
+      placements,
+      latencySeconds: state.elapsedSeconds,
+      detectionMethod: 'manual_tap',
+      confidenceScore: state.confidence,
+    });
+  }
 
   // ── Feature 1: Fall-asleep timeout — fires when max fall-asleep window elapses ──
   // Only fires if sleep hasn't been detected yet.
@@ -282,16 +274,9 @@ export default function MonitoringScreen() {
   useEffect(() => {
     notificationBlocker.block().catch(() => {});
     DndService.enable().catch(() => {});
-    // Start Android foreground service so monitoring is less likely to be killed
-    if (Platform.OS === 'android' && (NativeModules as any).NativeAlarm) {
-      (NativeModules as any).NativeAlarm.startForegroundService().catch(() => {});
-    }
     return () => {
       notificationBlocker.unblock().catch(() => {});
       DndService.disable().catch(() => {});
-      if (Platform.OS === 'android' && (NativeModules as any).NativeAlarm) {
-        (NativeModules as any).NativeAlarm.stopForegroundService().catch(() => {});
-      }
     };
   }, []);
 
@@ -509,7 +494,7 @@ export default function MonitoringScreen() {
         </View>
 
         {/* Manual tap fallback (brightness dim only) */}
-        <TouchableOpacity onPress={handleManualTapBrightness} style={styles.tapFallbackBtn} activeOpacity={0.7}>
+        <TouchableOpacity onPress={handleManualTapStart} style={styles.tapFallbackBtn} activeOpacity={0.7}>
           <Text style={styles.tapFallbackText}>{Strings.monitoring_tap_fallback}</Text>
         </TouchableOpacity>
 

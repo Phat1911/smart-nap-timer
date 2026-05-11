@@ -66,6 +66,7 @@
           ]
         }
       ],
+      "@notifee/react-native",
       "expo-av",
       [
         "expo-sensors",

@@ -75,6 +75,8 @@ try {
 import AppNavigator from './src/navigation/AppNavigator';
 import { tierService } from './src/services/TierService';
 import { scheduleSmartNudge } from './src/services/SmartNotificationService';
+import { alarmService } from './src/services/AlarmService';
+import { notifeeBackgroundHandler } from './src/services/NotifeeBackgroundHandler';
 import { LanguageProvider } from './src/contexts/LanguageContext';
 import { TopRightProvider, useTopRight } from './src/contexts/TopRightContext';
 import LangToggleButton from './src/components/ui/LangToggleButton';
@@ -156,6 +158,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    // Initialize alarm service for reliable background alarm scheduling
+    alarmService.initialize().catch((e) => console.error('Failed to initialize alarm service:', e));
+    
+    // Setup Notifee background handlers for when alarm fires
+    notifeeBackgroundHandler.setupListeners();
+    
     // Warm-up RevenueCat SDK để tránh độ trễ khi mở PaywallScreen lần đầu
     tierService.warmUp();
     scheduleSmartNudge().catch(() => {});

@@ -35,10 +35,8 @@ import {
   PanResponder,
   LayoutChangeEvent,
 } from 'react-native';
-import * as KeepAwake from 'expo-keep-awake';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
-import { NativeModules, Platform } from 'react-native';
 import { NativeStackNavigationProp }          from '@react-navigation/native-stack';
 import { Colors }                             from '../constants';
 import { useLanguage }                        from '../contexts/LanguageContext';
@@ -47,7 +45,6 @@ import { audioService }                       from '../services/AudioService';
 import { alarmService }                       from '../services/AlarmService';
 import { sessionService }                     from '../services/SessionService';
 import { usageService }                       from '../services/UsageService';
-import { batteryOptimizationService }         from '../services/BatteryOptimizationService';
 import { useScreenDim }                       from '../hooks/useScreenDim';
 import type { NapSession }                    from '../models/Session';
 
@@ -100,11 +97,6 @@ export default function SleepingScreen() {
     // 5.2 — Record that a session has started (increments daily counter)
     usageService.recordSessionStart().catch(() => {});
 
-    // Start native foreground service on Android to keep monitoring alive
-    if (Platform.OS === 'android' && (NativeModules as any).NativeAlarm) {
-      (NativeModules as any).NativeAlarm.startForegroundService().catch(() => {});
-    }
-
     // Start white noise audio
     audioService.play('rain', INITIAL_VOLUME).catch(() => {});
 
@@ -116,6 +108,7 @@ export default function SleepingScreen() {
       setRemaining((s) => {
         if (s <= 1) {
           clearInterval(intervalRef.current!);
+          alarmService.cancelAlarm().catch(() => {});
           // P.8 — build and save NapSession, then navigate to Wake
           const now = new Date();
           const sessionId = `session_${sleepStartTime}`;
@@ -150,28 +143,8 @@ export default function SleepingScreen() {
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
       audioService.stop().catch(() => {});
-      alarmService.cancelAlarm().catch(() => {});
-      if (Platform.OS === 'android' && (NativeModules as any).NativeAlarm) {
-        (NativeModules as any).NativeAlarm.stopForegroundService().catch(() => {});
-      }
     };
   }, []);
-
-  // ── Keep screen awake during nap session ──────────────────────────────────
-  // Prevent phone from locking and suspend app during sleep
-  useEffect(() => {
-    KeepAwake.activateKeepAwakeAsync().catch(() => {});
-    return () => {
-      KeepAwake.deactivateKeepAwake().catch(() => {});
-    };
-  }, []);
-
-  // ── Check battery optimization and show alert ─────────────────────────────
-  // Show alert once after nap starts to inform user about potential issues on
-  // aggressive battery optimization devices (Xiaomi/Redmi)
-  useEffect(() => {
-    batteryOptimizationService.checkAndShowAlert(Strings).catch(() => {});
-  }, [Strings]);
 
   // ── Volume change handler (task 2.20) ────────────────────────────────────
   const handleVolumeChange = useCallback((newVolume: number) => {

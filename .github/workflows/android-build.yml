@@ -1,0 +1,58 @@
+name: Android Debug Build
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-debug-apk:
+    name: Build Android debug APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+
+      - name: Install Android SDK cmdline-tools
+        run: |
+          set -e
+          export ANDROID_SDK_ROOT=$HOME/Android/Sdk
+          mkdir -p $ANDROID_SDK_ROOT/cmdline-tools
+          cd $HOME
+          if [ ! -f commandlinetools.zip ]; then
+            curl -sS -o commandlinetools.zip https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
+          fi
+          unzip -q -o commandlinetools.zip -d $ANDROID_SDK_ROOT/cmdline-tools
+          mkdir -p $ANDROID_SDK_ROOT/cmdline-tools/latest
+          mv $ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools/* $ANDROID_SDK_ROOT/cmdline-tools/latest/ || true
+          export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH
+          yes | sdkmanager --licenses || true
+          sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.2"
+
+      - name: Build debug APK
+        env:
+          ANDROID_SDK_ROOT: $HOME/Android/Sdk
+        run: |
+          set -e
+          cd android
+          ./gradlew assembleDebug --no-daemon -x lint
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
