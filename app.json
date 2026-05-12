@@ -55,7 +55,7 @@
       ]
     },
     "plugins": [
-      "./plugins/withNapDetectionService",
+      "./plugins/withNapDetectionService.js",
       "./plugins/withAndroidDnd",
       [
         "expo-notifications",
