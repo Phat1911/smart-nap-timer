@@ -198,6 +198,8 @@ export default function MonitoringScreen() {
     if (state.isDetected) {
       navigatedRef.current = true;
       alarmService.cancelAlarm().catch(() => {});
+      // Record session start exactly once when sleep is detected
+      usageService.recordSessionStart().catch(() => {});
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       navigation.replace('Sleeping', {
         targetMinutes,

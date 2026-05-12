@@ -96,9 +96,6 @@ export default function SleepingScreen() {
 
   // Start audio + schedule alarm on mount
   useEffect(() => {
-    // 5.2 — Record that a session has started (increments daily counter)
-    usageService.recordSessionStart().catch(() => {});
-
     // Start white noise audio
     audioService.play('rain', INITIAL_VOLUME).catch(() => {});
 
