@@ -635,6 +635,7 @@ export default function SettingsScreen() {
 
         {/* Dev Tools trigger — hidden in production; 5 taps within 2s to open */}
         {/* {__DEV__ && <DevToolsTrigger />} */}
+        <DevToolsTrigger />
       </ScrollView>
     </SafeAreaView>
   );

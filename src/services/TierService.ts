@@ -126,8 +126,12 @@ class TierService {
   async getCurrentTier(): Promise<TierName> {
     try {
       const cached = await AsyncStorage.getItem(TIER_STORAGE_KEY);
-      if (cached === 'pro' || cached === 'max') return cached;
+      if (cached === 'pro' || cached === 'max') {
+        console.log(`💎 TierService: current tier is '${cached}'`);
+        return cached;
+      }
     } catch {}
+    console.log('💎 TierService: current tier is \'free\'');
     return 'free';
   }
 
@@ -138,6 +142,7 @@ class TierService {
 
   async setTier(tier: TierName): Promise<void> {
     await AsyncStorage.setItem(TIER_STORAGE_KEY, tier);
+    console.log(`💎 TierService: tier set to '${tier}'`);
   }
 
   // ── RevenueCat sync ────────────────────────────────────────────────────────

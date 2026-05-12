@@ -442,7 +442,7 @@ export default function MonitoringScreen() {
         )}
 
         {/* Debug overlay — __DEV__ only, not shown in production */}
-        {__DEV__ && (
+        {/* {__DEV__ && (
           <View style={styles.debugCard}>
             <Text style={styles.debugTitle}>DEBUG — Score Breakdown</Text>
             <DebugRow label="Accel   " value={state.accelScore} />
@@ -458,7 +458,23 @@ export default function MonitoringScreen() {
                 : 'FP guard: off'}
             </Text>
           </View>
-        )}
+        )} */}
+
+        <View style={styles.debugCard}>
+            <Text style={styles.debugTitle}>DEBUG — Score Breakdown</Text>
+            <DebugRow label="Accel   " value={state.accelScore} />
+            <DebugRow label="Gyro    " value={state.gyroScore} />
+            <DebugRow label="Mic     " value={state.micScore} />
+            <DebugRow label="Duration" value={state.durationScore} />
+            <View style={styles.debugDivider} />
+            <DebugRow label="FUSED  " value={Math.round(state.confidence)} highlight />
+            <DebugRow label="TRIGGER" value={getSleepScoreTrigger()} dim />
+            <Text style={styles.debugGuard}>
+              {state.falsePositiveGuard
+                ? 'FP GUARD: ACTIVE (score capped at 58)'
+                : 'FP guard: off'}
+            </Text>
+          </View>
 
         {/* Sensor status */}
         <View style={styles.sensorList}>
@@ -511,7 +527,7 @@ export default function MonitoringScreen() {
       {/* Footer */}
       <View style={styles.footer}>
         {/* White noise indicator */}
-        <View style={styles.whiteNoiseBar}>
+        {/* <View style={styles.whiteNoiseBar}>
           <Text style={{ fontSize: 16 }}>〰️</Text>
           <Text style={styles.whiteNoiseText}>{Strings.monitoring_white_noise}</Text>
           <View style={styles.waveViz}>
@@ -519,7 +535,7 @@ export default function MonitoringScreen() {
               <View key={i} style={[styles.waveLine, { height: h * 3 }]} />
             ))}
           </View>
-        </View>
+        </View> */}
 
         {/* Manual tap fallback (brightness dim only) */}
         <TouchableOpacity onPress={handleManualTapStart} style={styles.tapFallbackBtn} activeOpacity={0.7}>

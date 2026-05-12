@@ -118,6 +118,7 @@ class UsageService {
     const record = await this.getRecord();
     record.count += 1;
     await this.saveRecord(record);
+    console.log(`📊 UsageService: session recorded. Daily count: ${record.count}`);
   }
 
   /** Manually reset counter (e.g. after purchasing upgrade) */

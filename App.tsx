@@ -174,9 +174,10 @@ export default function App() {
 
     const sub = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') {
-        tierService.getOrCreateDeviceId()
-          .then((userId) => tierService.fetchTierFromServer(userId))
-          .catch(() => {});
+        // NOTE: Do NOT call fetchTierFromServer() here on every foreground.
+        // This was causing tier resets when backend was unavailable or returned 'free'.
+        // Only sync with backend after a purchase (via PaywallScreen).
+        // Local AsyncStorage cache is the source of truth.
         scheduleSmartNudge().catch(() => {});
         wakeFlowService.consumePendingWakeIntent().catch(() => {});
       }

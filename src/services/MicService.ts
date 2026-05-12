@@ -70,6 +70,7 @@ class MicService {
 
       this.recording = recording;
       this.isRunning = true;
+      console.log('🎤 MicService: recording started successfully');
 
       // Poll metering every 500ms
       this.intervalId = setInterval(async () => {
@@ -83,7 +84,7 @@ class MicService {
         }
       }, 500);
     } catch (error) {
-      console.warn('MicService: failed to start recording', error);
+      console.warn('🎤 MicService: failed to start recording', error);
       this.isRunning = false;
     }
   }
@@ -101,6 +102,7 @@ class MicService {
     this.recording = null;
     this.callback = null;
     this.isRunning = false;
+    console.log('🎤 MicService: recording stopped');
 
     // Restore audio mode for playback
     await Audio.setAudioModeAsync({

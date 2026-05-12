@@ -40,6 +40,7 @@ import {
   ScrollView,
   TouchableOpacity,
 } from 'react-native';
+import * as Brightness from 'expo-brightness';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Audio } from 'expo-av';
 import { Asset } from 'expo-asset';
@@ -115,6 +116,12 @@ export default function WakeScreen() {
   const rampRef         = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef      = useRef(true);
   const vibrateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Restore screen brightness on mount (was dimmed by SleepingScreen) ────
+  useEffect(() => {
+    Brightness.setBrightnessAsync(1.0).catch(() => {});
+    return () => {};
+  }, []);
 
   // ── Current time display (HH:mm, ticks every second) ─────────────────────
   const [currentTime, setCurrentTime] = useState(() => {
