@@ -269,7 +269,7 @@ export default function MonitoringScreen() {
   // session and navigate straight to WakeScreen.
   useEffect(() => {
     if (navigatedRef.current) return;
-    if (state.elapsedSeconds >= targetMinutes * 60 && !state.isDetected) {
+    if (state.elapsedSeconds >= maxFallAsleepMinutes * 60 && !state.isDetected) {
       const now = new Date();
       const ts = Date.now();
       const sessionId = `session_${ts}`;
@@ -281,8 +281,8 @@ export default function MonitoringScreen() {
         time_of_day:          sessionService.getTimeOfDay(now.getHours()),
         target_minutes:       targetMinutes,
         actual_sleep_minutes: 0,
-        latency_minutes:      targetMinutes,
-        threshold_T_used:     targetMinutes,
+        latency_minutes:      maxFallAsleepMinutes,
+        threshold_T_used:     maxFallAsleepMinutes,
         detection_method:     state.detectionMethod,
         placement,
         placements:           placements.length > 0 ? placements : [placement],
@@ -295,7 +295,7 @@ export default function MonitoringScreen() {
       sessionService.save(session).catch(() => {});
       navigation.replace('Wake', { sessionId });
     }
-  }, [state.elapsedSeconds]);
+  }, [state.elapsedSeconds, maxFallAsleepMinutes, targetMinutes, placement, placements, state.detectionMethod, state.confidence, navigation]);
 
   // ── P.11 — Block foreground notifications + system DND on mount ─────────────
   useEffect(() => {
@@ -442,7 +442,7 @@ export default function MonitoringScreen() {
         )}
 
         {/* Debug overlay — __DEV__ only, not shown in production */}
-        {/* {__DEV__ && (
+        {__DEV__ && (
           <View style={styles.debugCard}>
             <Text style={styles.debugTitle}>DEBUG — Score Breakdown</Text>
             <DebugRow label="Accel   " value={state.accelScore} />
@@ -458,7 +458,7 @@ export default function MonitoringScreen() {
                 : 'FP guard: off'}
             </Text>
           </View>
-        )} */}
+        )}
 
         {/* Sensor status */}
         <View style={styles.sensorList}>
