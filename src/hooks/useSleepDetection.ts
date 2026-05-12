@@ -38,6 +38,7 @@
 // ─────────────────────────────────────────
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { AppState, Platform } from 'react-native';
 import { motionService, MotionSample } from '../services/MotionService';
 import { micService }                  from '../services/MicService';
 import { confidenceEngine }            from '../services/ConfidenceEngine';
@@ -221,8 +222,30 @@ export function useSleepDetection(thresholdMinutes: number, placement?: PhonePla
       });
     }, EVAL_INTERVAL_MS);
 
+    // ── Mic recovery on screen-off (Redmi battery optimization workaround) ───
+    // If screen turns off, mic recording thread may be killed. Restart it on app foreground.
+    const appStateListener = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'background' && Platform.OS === 'android') {
+        // Screen turned off — try to restart mic in case it was killed
+        if (micActiveRef.current || micService.running) {
+          console.log('🎤 useSleepDetection: app backgrounded, attempting mic recovery');
+          micService.stop().catch(() => {});
+          setTimeout(() => {
+            micService.start((sample) => {
+              micActiveRef.current = true;
+              addMic(sample);
+            }).catch(() => {
+              console.warn('🎤 useSleepDetection: mic recovery failed');
+              micActiveRef.current = false;
+            });
+          }, 500);
+        }
+      }
+    });
+
     return () => {
       clearInterval(evalId);
+      appStateListener.remove();
       motionService.stop();
       micService.stop().catch(() => {});
       notificationBlocker.unblock().catch(() => {});

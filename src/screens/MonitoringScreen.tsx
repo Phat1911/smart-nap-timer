@@ -62,9 +62,11 @@ import { alarmService }                       from '../services/AlarmService';
 import { napDetectionServiceBridge }          from '../services/NapDetectionServiceBridge';
 import { sessionService }                     from '../services/SessionService';
 import { usageService }                       from '../services/UsageService';
+import { deviceInfoService }                  from '../services/DeviceInfoService';
 import type { NapSession }                    from '../models/Session';
 
 const DND_PERMISSION_ASKED_KEY = '@smart_nap_timer:dnd_permission_asked';
+const BATTERY_OPTIMIZATION_ASKED_KEY = '@smart_nap_timer:battery_optimization_asked';
 const MANUAL_TAP_DIM_BRIGHTNESS = 0.005;
 
 // ── Haptics shim (no static import — native module guard) ─────────────────────
@@ -159,6 +161,7 @@ export default function MonitoringScreen() {
 
   // ── DND permission modal (one-time, Android only) ────────────────────────
   const [showDndModal, setShowDndModal] = useState(false);
+  const [showBatteryOptModal, setShowBatteryOptModal] = useState(false);
 
   useEffect(() => {
     if (Platform.OS !== 'android') return;
@@ -169,6 +172,20 @@ export default function MonitoringScreen() {
       if (!granted) {
         setShowDndModal(true);
         await AsyncStorage.setItem(DND_PERMISSION_ASKED_KEY, 'true').catch(() => {});
+      }
+    })();
+  }, []);
+
+  // ── Battery optimization whitelist prompt (one-time, Android only) ──────
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    (async () => {
+      const alreadyAsked = await AsyncStorage.getItem(BATTERY_OPTIMIZATION_ASKED_KEY).catch(() => null);
+      if (alreadyAsked) return;
+      const isIgnoringBatteryOpt = await deviceInfoService.isIgnoringBatteryOptimizations();
+      if (!isIgnoringBatteryOpt) {
+        setShowBatteryOptModal(true);
+        await AsyncStorage.setItem(BATTERY_OPTIMIZATION_ASKED_KEY, 'true').catch(() => {});
       }
     })();
   }, []);
@@ -398,6 +415,42 @@ export default function MonitoringScreen() {
                 activeOpacity={0.7}
               >
                 <Text style={styles.modalBtnPrimaryText}>{Strings.monitoring_dnd_grant}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Battery optimization whitelist modal — shown once on Android if not whitelisted */}
+      <Modal
+        visible={showBatteryOptModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowBatteryOptModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>🔋 Battery Optimization</Text>
+            <Text style={styles.modalBody}>
+              To keep the microphone running while your screen is off, please whitelist Smart Nap Timer in your device's battery optimization settings. Without this, sleep detection may fail when you turn off your screen.
+            </Text>
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                onPress={() => setShowBatteryOptModal(false)}
+                style={styles.modalBtnSecondary}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.modalBtnSecondaryText}>Maybe Later</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  setShowBatteryOptModal(false);
+                  // TODO: Open battery settings app if available via DeviceInfoService
+                }}
+                style={styles.modalBtnPrimary}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.modalBtnPrimaryText}>Open Settings</Text>
               </TouchableOpacity>
             </View>
           </View>
