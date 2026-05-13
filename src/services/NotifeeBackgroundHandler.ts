@@ -29,6 +29,7 @@ class NotifeeBackgroundHandler {
   setupListeners(): void {
     if (this.isListenerSetup) return;
     this.isListenerSetup = true;
+    console.log('🔔 NotifeeBackgroundHandler: Setting up background event listeners');
 
     // Listen to foreground notifications (app open or in background)
     notifee.onForegroundEvent(({ type, detail }) => {
@@ -37,16 +38,18 @@ class NotifeeBackgroundHandler {
 
     // Listen to background notifications (when user taps notification or alarm fires while app closed)
     notifee.onBackgroundEvent(async ({ type, detail }) => {
+      console.log(`🔔 NotifeeBackgroundHandler: Background event received (type=${type})`);
       await this.handleNotificationEvent(type, detail);
     });
 
-    console.log('✓ Notifee background handlers setup complete');
+    console.log('🔔 NotifeeBackgroundHandler: Listeners setup complete');
   }
 
   /**
    * Handles all notification events
    */
   private async handleNotificationEvent(type: EventType, detail: any): Promise<void> {
+    console.log(`🔔 NotifeeBackgroundHandler: Handling event (type=${type})`);
     const { notification, pressAction } = detail;
 
     if (type === EventType.DELIVERED) {
@@ -79,14 +82,18 @@ class NotifeeBackgroundHandler {
   private async handleAlarmDelivered(notification: any): Promise<void> {
     try {
       const rawIntent = notification?.data?.wakeIntent;
-      if (!rawIntent || typeof rawIntent !== 'string') return;
+      if (!rawIntent || typeof rawIntent !== 'string') {
+        console.log('🔔 NotifeeBackgroundHandler: Alarm delivered but no wake intent data');
+        return;
+      }
 
       const parsed = JSON.parse(rawIntent);
+      console.log(`🔔 NotifeeBackgroundHandler: Queueing wake intent from delivered alarm (kind=${parsed.kind})`);
       await wakeFlowService.queuePendingWakeIntent(parsed);
       await wakeFlowService.consumePendingWakeIntent();
-      console.log('✓ Wake intent queued from delivered alarm notification');
+      console.log('✓ 🔔 Wake intent consumed from delivered alarm notification');
     } catch (error) {
-      console.error('Failed handling delivered alarm notification:', error);
+      console.error('🔔 NotifeeBackgroundHandler: Failed handling delivered alarm notification:', error);
     }
   }
 

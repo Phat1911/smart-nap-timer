@@ -100,6 +100,7 @@ export default function SleepingScreen() {
     audioService.play('rain', INITIAL_VOLUME).catch(() => {});
 
     // Schedule a notification alarm as a safety net (in case app is killed)
+    console.log(`😴 SleepingScreen: Sleep detected, scheduling alarm for ${targetMinutes} min`);
     const wakeIntent: WakeAlarmIntent = {
       kind: 'sleeping_timeout',
       sessionId: `session_${sleepStartTime}`,

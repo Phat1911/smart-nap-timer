@@ -160,7 +160,11 @@ class AlarmService {
       );
 
       this.scheduledId = ALARM_NOTIFICATION_ID;
-      console.log(`✓ Alarm scheduled for ${delayMinutes} minutes from now using native AlarmManager`);
+      const fireTime = new Date(triggerTime).toLocaleTimeString();
+      console.log(`⏰ ALARM SCHEDULED: ${delayMinutes} min from now (fires at ${fireTime})`);
+      if (wakeIntent) {
+        console.log(`   └─ Intent: ${wakeIntent.kind}`);
+      }
       return ALARM_NOTIFICATION_ID;
     } catch (error) {
       console.error('Failed to schedule alarm:', error);
@@ -182,7 +186,7 @@ class AlarmService {
         await notifee.cancelTriggerNotification(this.scheduledId);
         this.scheduledId = null;
         await wakeFlowService.clearPendingWakeIntent();
-        console.log('✓ Alarm cancelled');
+        console.log('⏰ ALARM CANCELLED');
       }
     } catch (error) {
       console.error('Failed to cancel alarm:', error);
@@ -196,7 +200,7 @@ class AlarmService {
         await notifee.cancelTriggerNotification(id);
       }
       this.scheduledId = null;
-      console.log('✓ All alarms cancelled');
+      console.log('⏰ ALL ALARMS CANCELLED');
     } catch (error) {
       console.error('Failed to cancel all alarms:', error);
     }

@@ -121,6 +121,7 @@ export default function MonitoringScreen() {
   const navigatedRef = useRef(false);
 
   useEffect(() => {
+    console.log(`📊 MonitoringScreen: Starting monitoring with maxFallAsleepMinutes=${maxFallAsleepMinutes}`);
     alarmService.scheduleAlarm(maxFallAsleepMinutes, {
       kind: 'monitoring_timeout',
       targetMinutes,
@@ -132,7 +133,10 @@ export default function MonitoringScreen() {
     }).catch(() => {});
 
     // Start foreground service to keep detector running in background
-    napDetectionServiceBridge.start().catch(() => {});
+    console.log('📊 MonitoringScreen: Starting foreground service for background detection');
+    napDetectionServiceBridge.start().catch((err) => {
+      console.error('📊 MonitoringScreen: Failed to start foreground service:', err);
+    });
 
     return () => {
       alarmService.cancelAlarm().catch(() => {});

@@ -31,16 +31,22 @@ type WakeRouteParams = { sessionId: string; fallAsleepTimeout?: boolean };
 
 class WakeFlowService {
   async queuePendingWakeIntent(intent: WakeAlarmIntent): Promise<void> {
+    console.log(`🎯 WakeFlowService: Queuing wake intent (kind=${intent.kind})`);
     await AsyncStorage.setItem(PENDING_WAKE_INTENT_KEY, JSON.stringify(intent)).catch(() => {});
   }
 
   async clearPendingWakeIntent(): Promise<void> {
+    console.log('🎯 WakeFlowService: Clearing pending wake intent');
     await AsyncStorage.removeItem(PENDING_WAKE_INTENT_KEY).catch(() => {});
   }
 
   async consumePendingWakeIntent(): Promise<boolean> {
+    console.log('🎯 WakeFlowService: Attempting to consume pending wake intent');
     const raw = await AsyncStorage.getItem(PENDING_WAKE_INTENT_KEY).catch(() => null);
-    if (!raw) return false;
+    if (!raw) {
+      console.log('🎯 WakeFlowService: No pending wake intent found');
+      return false;
+    }
 
     if (!navigationRef.isReady()) {
       return false;
@@ -50,12 +56,17 @@ class WakeFlowService {
 
     try {
       const intent = JSON.parse(raw) as WakeAlarmIntent;
+      console.log(`🎯 WakeFlowService: Parsed intent (kind=${intent.kind})`);
       const params = await this.resolveWakeRouteParams(intent);
-      if (!params) return false;
+      if (!params) {
+        console.log('🎯 WakeFlowService: Failed to resolve route params');
+        return false;
+      }
+      console.log(`🎯 WakeFlowService: Navigating to Wake screen (sessionId=${params.sessionId})`);
       navigationRef.navigate('Wake' as never, params as never);
       return true;
     } catch (error) {
-      console.error('Failed to consume pending wake intent:', error);
+      console.error('🎯 WakeFlowService: Failed to consume pending wake intent:', error);
       return false;
     }
   }
