@@ -40,7 +40,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { AppState, Platform } from 'react-native';
 import { motionService, MotionSample } from '../services/MotionService';
-import { micService }                  from '../services/MicService';
+import { micService, MicSample }        from '../services/MicService';
 import { confidenceEngine }            from '../services/ConfidenceEngine';
 import { useRollingWindow }            from './useRollingWindow';
 import { DETECTION, getSleepScoreTrigger } from '../constants/config';
@@ -128,7 +128,7 @@ export function useSleepDetection(thresholdMinutes: number, placement?: PhonePla
     });
 
     // Start microphone (async; may be denied — handled gracefully)
-    micService.start((sample) => {
+    micService.start((sample: MicSample) => {
       micActiveRef.current = true;
       addMic(sample);
     }).catch(() => {
@@ -220,6 +220,12 @@ export function useSleepDetection(thresholdMinutes: number, placement?: PhonePla
         durationScore:      result.durationScore,
         falsePositiveGuard: result.falsePositiveGuard,
       });
+
+      // Detect if mic died unexpectedly (killed by battery optimization)
+      if (micActiveRef.current && !micService.running) {
+        console.warn(`⚠️ useSleepDetection: MIC DIED at ${elapsed.toFixed(1)}s! (Battery optimization killed it)`);
+        micActiveRef.current = false;
+      }
     }, EVAL_INTERVAL_MS);
 
     // ── Mic recovery on screen-off (Redmi battery optimization workaround) ───
@@ -231,7 +237,7 @@ export function useSleepDetection(thresholdMinutes: number, placement?: PhonePla
           console.log('🎤 useSleepDetection: app backgrounded, attempting mic recovery');
           micService.stop().catch(() => {});
           setTimeout(() => {
-            micService.start((sample) => {
+            micService.start((sample: MicSample) => {
               micActiveRef.current = true;
               addMic(sample);
             }).catch(() => {
@@ -243,8 +249,26 @@ export function useSleepDetection(thresholdMinutes: number, placement?: PhonePla
       }
     });
 
+    // ── Periodic mic health check (log every 5 seconds) ─────────────────────
+    let lastHealthCheckTime = 0;
+    const healthCheckInterval = setInterval(() => {
+      const now = Date.now();
+      if (now - lastHealthCheckTime < 5000) return; // Check every 5s
+      lastHealthCheckTime = now;
+
+      const micUptime = micService.getUptime();
+      const timeSinceLastMeter = micService.getTimeSinceLastMeter();
+      if (micActiveRef.current && micUptime > 0) {
+        console.log(`🎤 MIC HEALTH: uptime=${Math.round(micUptime / 1000)}s, lastMeter=${timeSinceLastMeter}ms`);
+        if (timeSinceLastMeter > 3000) {
+          console.warn(`⚠️ MIC UNRESPONSIVE: No data for ${Math.round(timeSinceLastMeter / 1000)}s!`);
+        }
+      }
+    }, 1000);
+
     return () => {
       clearInterval(evalId);
+      clearInterval(healthCheckInterval);
       appStateListener.remove();
       motionService.stop();
       micService.stop().catch(() => {});

@@ -45,6 +45,9 @@ class MicService {
   private callback: MicCallback | null = null;
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private isRunning = false;
+  private startTime: number = 0;
+  private lastMeteringTime: number = 0;
+  private checkIntervalId: ReturnType<typeof setInterval> | null = null;
 
   /**
    * Starts recording and emits a MicSample every 500 ms
@@ -54,6 +57,8 @@ class MicService {
   async start(callback: MicCallback): Promise<void> {
     if (this.isRunning) return;
     this.callback = callback;
+    this.startTime = Date.now();
+    this.lastMeteringTime = Date.now();
 
     try {
       await Audio.setAudioModeAsync({
@@ -70,21 +75,35 @@ class MicService {
 
       this.recording = recording;
       this.isRunning = true;
-      console.log('🎤 MicService: recording started successfully');
+      console.log('🎤 MicService: STARTED recording at ' + new Date().toLocaleTimeString());
 
       // Poll metering every 500ms
       this.intervalId = setInterval(async () => {
         if (!this.recording) return;
         const status = await this.recording.getStatusAsync();
         if (status.isRecording && status.metering !== undefined) {
+          this.lastMeteringTime = Date.now();
           this.callback?.({
             metering: status.metering,
             timestamp: Date.now(),
           });
+        } else if (!status.isRecording && this.isRunning) {
+          console.warn('🎤 MicService: Recording stopped unexpectedly (killed by OS?)');
+          this.isRunning = false;
         }
       }, 500);
+
+      // Monitor for unexpected mic death (no metering updates for 3+ seconds)
+      this.checkIntervalId = setInterval(() => {
+        if (!this.isRunning) return;
+        const timeSinceLastMeter = Date.now() - this.lastMeteringTime;
+        if (timeSinceLastMeter > 3000) {
+          console.warn(`🎤 MicService: DEAD - No metering for ${Math.round(timeSinceLastMeter / 1000)}s (Battery optimization killed it?)`);
+          this.isRunning = false;
+        }
+      }, 2000);
     } catch (error) {
-      console.warn('🎤 MicService: failed to start recording', error);
+      console.warn('🎤 MicService: FAILED to start recording', error);
       this.isRunning = false;
     }
   }
@@ -94,6 +113,11 @@ class MicService {
    */
   async stop(): Promise<void> {
     if (this.intervalId) clearInterval(this.intervalId);
+    if (this.checkIntervalId) clearInterval(this.checkIntervalId);
+    
+    const uptime = Date.now() - this.startTime;
+    console.log(`🎤 MicService: STOPPED after ${Math.round(uptime / 1000)}s`);
+    
     try {
       await this.recording?.stopAndUnloadAsync();
     } catch {
@@ -102,7 +126,6 @@ class MicService {
     this.recording = null;
     this.callback = null;
     this.isRunning = false;
-    console.log('🎤 MicService: recording stopped');
 
     // Restore audio mode for playback
     await Audio.setAudioModeAsync({
@@ -113,6 +136,24 @@ class MicService {
 
   get running(): boolean {
     return this.isRunning;
+  }
+
+  /**
+   * Gets the uptime since mic was started (in milliseconds)
+   * Useful for debugging mic killed by battery optimization
+   */
+  getUptime(): number {
+    if (!this.isRunning) return 0;
+    return Date.now() - this.startTime;
+  }
+
+  /**
+   * Gets time since last metering sample (in milliseconds)
+   * If > 3000ms, mic is likely dead
+   */
+  getTimeSinceLastMeter(): number {
+    if (!this.isRunning) return 0;
+    return Date.now() - this.lastMeteringTime;
   }
 }
 
