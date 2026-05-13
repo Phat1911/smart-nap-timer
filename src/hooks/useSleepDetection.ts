@@ -43,7 +43,7 @@ import { motionService, MotionSample } from '../services/MotionService';
 import { micService }                  from '../services/MicService';
 import { confidenceEngine }            from '../services/ConfidenceEngine';
 import { useRollingWindow }            from './useRollingWindow';
-import { DETECTION, getSleepScoreTrigger } from '../constants/config';
+import { DETECTION, getSleepScoreTrigger, PLACEMENT_PROFILES } from '../constants/config';
 import { notificationBlocker }         from '../services/NotificationBlocker';
 import type { DetectionMethod, PhonePlacement } from '../models/Session';
 
@@ -157,10 +157,14 @@ export function useSleepDetection(thresholdMinutes: number, placement?: PhonePla
       // Movement-adjusted minimum: if significant movement was detected recently,
       // extend the detection window so the clock restarts from that movement.
       // Prevents the min-time guard from being consumed while the user is still awake.
-      if (result.accelScore < 45) {
+      // Use placement-aware threshold: consider movement only if accelScore is
+      // well below the placement's accelAgreeMin (indicating actual phone movement, not measurement noise).
+      const primaryPlacement = (placements && placements[0]) ?? placement ?? 'mattress';
+      const profile = PLACEMENT_PROFILES[primaryPlacement];
+      const movementThreshold = Math.max(profile.accelAgreeMin - 25, 15); // 15 is floor for very lenient placements
+      if (result.accelScore < movementThreshold) {
         lastMovementTimeRef.current = elapsed; // record elapsed seconds of last movement
       }
-      const primaryPlacement = (placements && placements[0]) ?? placement ?? 'mattress';
       const baseMin = getMinDetectionSeconds(primaryPlacement);
       const movementMin = lastMovementTimeRef.current !== null
         ? lastMovementTimeRef.current + 90  // require 90 s of stillness after last movement
