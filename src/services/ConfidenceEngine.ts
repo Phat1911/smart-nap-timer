@@ -45,7 +45,7 @@
 import { MotionSample } from './MotionService';
 import { MicSample } from './MicService';
 import { breathingDetector } from './BreathingDetector';
-import { DETECTION, PLACEMENT_PROFILES, DEFAULT_PLACEMENT, PlacementProfile } from '../constants/config';
+import { DETECTION, PLACEMENT_PROFILES, DEFAULT_PLACEMENT, PlacementProfile, DEBUG_DETECTION } from '../constants/config';
 import type { PhonePlacement } from '../models/Session';
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -175,11 +175,12 @@ class ConfidenceEngine {
       const { weights } = profile;
       const totalWeight = weights.accel + weights.gyro + weights.mic + weights.duration;
 
-      const raw =
-        (accelScore    * weights.accel    +
-         gyroScore     * weights.gyro     +
-         micScore      * weights.mic      +
-         durationScore * weights.duration) / totalWeight;
+      const raw = DEBUG_DETECTION.MIC_ONLY_FUSION
+        ? micScore
+        : (accelScore    * weights.accel    +
+           gyroScore     * weights.gyro     +
+           micScore      * weights.mic      +
+           durationScore * weights.duration) / totalWeight;
 
       // If mic is disabled (no samples) and mic is a secondary signal for this
       // placement (weight ≤ 15%), skip the mic gate so accel-primary placements
@@ -187,9 +188,11 @@ class ConfidenceEngine {
       // For chest and mattress (high mic weight), always require mic agreement.
       const micDisabled = micSamples.length === 0;
       const skipMicGate = micDisabled && profile.weights.mic <= 15;
-      const bothAgree = skipMicGate
-        ? accelScore >= profile.accelAgreeMin
-        : accelScore >= profile.accelAgreeMin && micScore >= profile.micAgreeMin;
+      const bothAgree = DEBUG_DETECTION.MIC_ONLY_FUSION
+        ? micScore >= profile.micAgreeMin
+        : skipMicGate
+          ? accelScore >= profile.accelAgreeMin
+          : accelScore >= profile.accelAgreeMin && micScore >= profile.micAgreeMin;
 
       const score = bothAgree
         ? Math.round(Math.min(100, Math.max(0, raw)))

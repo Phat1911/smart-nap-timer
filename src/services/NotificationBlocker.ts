@@ -41,21 +41,19 @@ if (!__DEV__) {
 // ─────────────────────────────────────────
 
 class NotificationBlocker {
-  private originalBehavior: any = null;
+  private blockCount = 0;
 
   /**
    * Suppresses all foreground notifications — call when monitoring starts
    */
   async block(): Promise<void> {
     try {
-      // Store current behavior
-      this.originalBehavior = {
-        shouldShowAlert: true,
-        shouldPlaySound: true,
-        shouldSetBadge: true,
-        shouldShowBanner: true,
-        shouldShowList: true,
-      };
+      this.blockCount += 1;
+      console.log(`NotificationBlocker: block() called -> count=${this.blockCount}`);
+      // If already blocked by another caller, nothing else to do
+      if (this.blockCount > 1) {
+        return;
+      }
 
       // Override: hide all foreground notifications while napping
       Notifications.setNotificationHandler({
@@ -77,6 +75,15 @@ class NotificationBlocker {
    */
   async unblock(): Promise<void> {
     try {
+      if (this.blockCount > 0) {
+        this.blockCount -= 1;
+      }
+      console.log(`NotificationBlocker: unblock() called -> count=${this.blockCount}`);
+
+      if (this.blockCount > 0) {
+        return;
+      }
+
       Notifications.setNotificationHandler({
         handleNotification: async () => ({
           shouldShowAlert:  true,
@@ -86,7 +93,6 @@ class NotificationBlocker {
           shouldShowList:   true,
         }),
       });
-      this.originalBehavior = null;
     } catch {
       // Silently fail
     }

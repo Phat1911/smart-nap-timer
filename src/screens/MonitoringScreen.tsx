@@ -56,8 +56,8 @@ import { useSleepDetection }                  from '../hooks/useSleepDetection';
 import { usePermissions }                     from '../hooks/usePermissions';
 import { useTierGate }                        from '../hooks/useTierGate';
 import { PermissionDeniedCard }               from '../components/ui/PermissionDeniedCard';
-import { notificationBlocker }                from '../services/NotificationBlocker';
 import DndService                             from '../services/DndService';
+import { napInterruptionService }             from '../services/NapInterruptionService';
 import { alarmService }                       from '../services/AlarmService';
 import { napDetectionServiceBridge }          from '../services/NapDetectionServiceBridge';
 import { sessionService }                     from '../services/SessionService';
@@ -122,6 +122,7 @@ export default function MonitoringScreen() {
 
   useEffect(() => {
     console.log(`📊 MonitoringScreen: Starting monitoring with maxFallAsleepMinutes=${maxFallAsleepMinutes}`);
+    napInterruptionService.start().catch(() => {});
     alarmService.scheduleAlarm(maxFallAsleepMinutes, {
       kind: 'monitoring_timeout',
       targetMinutes,
@@ -222,6 +223,9 @@ export default function MonitoringScreen() {
       // Record session start exactly once when sleep is detected
       usageService.recordSessionStart().catch(() => {});
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      // Stop interruption suppression here — Sleeping screen intentionally
+      // does not need the Monitoring-specific suppression to remain active.
+      napInterruptionService.stop().catch(() => {});
       navigation.replace('Sleeping', {
         targetMinutes,
         sleepStartTime: Date.now(),
@@ -240,6 +244,8 @@ export default function MonitoringScreen() {
     alarmService.cancelAlarm().catch(() => {});
     onManualTap();
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    // Stop notification suppression when entering Sleeping via manual tap
+    napInterruptionService.stop().catch(() => {});
     navigation.replace('Sleeping', {
       targetMinutes,
       sleepStartTime: Date.now(),
@@ -318,16 +324,6 @@ export default function MonitoringScreen() {
     }
   }, [state.elapsedSeconds, maxFallAsleepMinutes, targetMinutes, placement, placements, state.detectionMethod, state.confidence, navigation]);
 
-  // ── P.11 — Block foreground notifications + system DND on mount ─────────────
-  useEffect(() => {
-    notificationBlocker.block().catch(() => {});
-    DndService.enable().catch(() => {});
-    return () => {
-      notificationBlocker.unblock().catch(() => {});
-      DndService.disable().catch(() => {});
-    };
-  }, []);
-
   // ── Formatted elapsed time (task 2.23) ───────────────────────────────────
   const elapsedMins = Math.floor(state.elapsedSeconds / 60);
   const elapsedSecs = state.elapsedSeconds % 60;
@@ -337,8 +333,8 @@ export default function MonitoringScreen() {
   const methodLabel    = METHOD_LABELS[state.detectionMethod] ?? Strings.monitoring_method_combo; // task 2.24
 
   function handleCancel() {
-    // P.11 -- unblock is handled by the useEffect cleanup on unmount;
-    // do NOT call it here to avoid a race with the new screen's block().
+    // Restore interruptions only for a true user cancel; nap-end cleanup lives in WakeScreen.
+    napInterruptionService.stop().catch(() => {});
     alarmService.cancelAlarm().catch(() => {});
     navigation.replace('Main');
   }
@@ -517,22 +513,6 @@ export default function MonitoringScreen() {
           </View>
         )} */}
 
-        <View style={styles.debugCard}>
-            <Text style={styles.debugTitle}>DEBUG — Score Breakdown</Text>
-            <DebugRow label="Accel   " value={state.accelScore} />
-            <DebugRow label="Gyro    " value={state.gyroScore} />
-            <DebugRow label="Mic     " value={state.micScore} />
-            <DebugRow label="Duration" value={state.durationScore} />
-            <View style={styles.debugDivider} />
-            <DebugRow label="FUSED  " value={Math.round(state.confidence)} highlight />
-            <DebugRow label="TRIGGER" value={getSleepScoreTrigger()} dim />
-            <Text style={styles.debugGuard}>
-              {state.falsePositiveGuard
-                ? 'FP GUARD: ACTIVE (score capped at 58)'
-                : 'FP guard: off'}
-            </Text>
-          </View>
-
         {/* Sensor status */}
         <View style={styles.sensorList}>
           <View style={styles.sensorRow}>
@@ -589,7 +569,7 @@ export default function MonitoringScreen() {
           <Text style={styles.whiteNoiseText}>{Strings.monitoring_white_noise}</Text>
           <View style={styles.waveViz}>
             {[2, 3, 4, 3, 2].map((h, i) => (
-              <View key={i} style={[styles.waveLine, { height: h * 3 }]} />
+              set TEMP=D:\temp && set TMP=D:\temp && eas build --platform android --local              <View key={i} style={[styles.waveLine, { height: h * 3 }]} />
             ))}
           </View>
         </View> */}

@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Smart Nap Timer",
-    "slug": "smart-nap-timer",
+    "slug": "sm",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -86,11 +86,12 @@
     },
     "extra": {
       "eas": {
-        "projectId": "d23bc949-943d-4961-aae6-6d8405ba7970"
+        "projectId": "2070c0af-ac86-4987-844a-d00f11321552"
       }
     },
     "runtimeVersion": {
       "policy": "appVersion"
-    }
+    },
+    "owner": "nicolastran"
   }
 }

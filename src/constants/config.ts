@@ -58,11 +58,17 @@ export const DETECTION = {
   WEIGHT_DURATION: 10,
 };
 
+// Temporary debug switches for sensor-fusion diagnosis.
+// Keep these off in normal builds; flip them back to false after testing.
+export const DEBUG_DETECTION = {
+  MIC_ONLY_FUSION: false,
+};
+
 // Adaptive threshold formula weights
 export const ADAPTIVE = {
   PREV_AVG_WEIGHT: 0.7,
   LAST_SESSION_WEIGHT: 0.3,
-  AI_ACTIVATION_SESSION: 5,        // AI kicks in after 5 sessions
+  AI_ACTIVATION_DAYS: 30,          // AI kicks in after 30 days of session history
 };
 
 // Insufficient sleep detection

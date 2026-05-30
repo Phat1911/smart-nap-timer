@@ -63,7 +63,7 @@ class WakeFlowService {
         return false;
       }
       console.log(`🎯 WakeFlowService: Navigating to Wake screen (sessionId=${params.sessionId})`);
-      navigationRef.navigate('Wake' as never, params as never);
+      navigationRef.navigate('Wake', params);
       return true;
     } catch (error) {
       console.error('🎯 WakeFlowService: Failed to consume pending wake intent:', error);

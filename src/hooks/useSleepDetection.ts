@@ -1,194 +1,222 @@
-/**
- * useSleepDetection — Hook for real-time sleep state detection
- *
- * Responsible for:
- * - Starting MotionService and MicService on mount
- * - Feeding samples into the RollingWindow every SAMPLE_INTERVAL_MS
- * - Computing a confidence score every EVAL_INTERVAL_MS via ConfidenceEngine
- * - Triggering isDetected when score >= trigger for SUSTAINED_HIGH_COUNT consecutive evals
- * - Exposing onManualTap() for the user to trigger detection manually
- *
- * Used by:
- * - MonitoringScreen: receives state.isDetected to navigate to SleepingScreen
- *
- * Notes:
- * - consecutiveHighRef uses useRef (not useState) to avoid re-renders
- *   each time the counter increments — only setState when actually detected or UI needs an update
- * - MIN_DETECTION_SECONDS = 3 minutes: never triggers before 3 minutes
- *   to avoid false positives when the user has just lain down but not yet asleep
- * - detectedRef is an idempotency guard: once detected, no further samples are processed
- *
- * Tasks 2.10 + 2.15 — useSleepDetection
- *
- * Task 2.10 — Fires when ConfidenceEngine score ≥ 80 sustained across window
- *   • Starts motionService + micService on mount; cleans up on unmount.
- *   • Feeds every sample into useRollingWindow.
- *   • Evaluates ConfidenceEngine every second (SAMPLE_INTERVAL_MS × 2).
- *   • Requires SUSTAINED_HIGH_COUNT consecutive high scores before setting
- *     isDetected = true, preventing momentary spikes from triggering.
- *   • On wasReset (30 s sustained movement) the consecutive counter resets.
- *
- * Task 2.15 — Manual tap fallback
- *   • onManualTap() immediately sets isDetected = true with method
- *     'manual_tap', for users who want to start the countdown themselves.
- */
-
-// ─────────────────────────────────────────
-// Imports
-// ─────────────────────────────────────────
-
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { AppState, Platform } from 'react-native';
-import { motionService, MotionSample } from '../services/MotionService';
-import { micService, MicSample }        from '../services/MicService';
-import { confidenceEngine }            from '../services/ConfidenceEngine';
-import { useRollingWindow }            from './useRollingWindow';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { DETECTION, getSleepScoreTrigger } from '../constants/config';
-import { notificationBlocker }         from '../services/NotificationBlocker';
 import type { DetectionMethod, PhonePlacement } from '../models/Session';
+import { confidenceEngine } from '../services/ConfidenceEngine';
+import { micService, MicSample } from '../services/MicService';
+import { motionService, MotionSample } from '../services/MotionService';
+import { napDetectionServiceBridge } from '../services/NapDetectionServiceBridge';
+import { useRollingWindow } from './useRollingWindow';
 
-// Evaluate the engine twice per sample interval (every ~1 s)
 const EVAL_INTERVAL_MS = DETECTION.SAMPLE_INTERVAL_MS * 2;
 
-// ── Public types ──────────────────────────────────────────────────────────────
-
 export interface SleepDetectionState {
-  /** True once the score has been sustained at ≥ 80 */
-  isDetected:      boolean;
-  /** 0–100 current confidence score */
-  confidence:      number;
-  /** Which sensor(s) drove the detection */
+  isDetected: boolean;
+  confidence: number;
   detectionMethod: DetectionMethod;
-  /** Seconds elapsed since monitoring began */
-  elapsedSeconds:  number;
-  /** Whether the accelerometer is feeding data */
-  accelActive:     boolean;
-  /** Whether the microphone is feeding data */
-  micActive:       boolean;
-  /** Per-sensor score breakdown (for debug overlay) */
-  accelScore:          number;
-  gyroScore:           number;
-  micScore:            number;
-  durationScore:       number;
-  falsePositiveGuard:  boolean;
+  elapsedSeconds: number;
+  accelActive: boolean;
+  micActive: boolean;
+  accelScore: number;
+  gyroScore: number;
+  micScore: number;
+  durationScore: number;
+  falsePositiveGuard: boolean;
 }
 
-// ── Hook ──────────────────────────────────────────────────────────────────────
-
-/**
- * Hook for real-time sleep detection — starts sensors and continuously computes confidence
- * @param thresholdMinutes - Time threshold (minutes) used to compute durationScore
- * @param placement - Primary phone placement (used for ConfidenceEngine profile)
- * @param placements - All currently active placements (for multi-placement fusion)
- * @returns state (SleepDetectionState), onManualTap (manual fallback)
- */
-export function useSleepDetection(thresholdMinutes: number, placement?: PhonePlacement, placements?: PhonePlacement[]) {
+export function useSleepDetection(
+  thresholdMinutes: number,
+  placement?: PhonePlacement,
+  placements?: PhonePlacement[],
+) {
   const [state, setState] = useState<SleepDetectionState>({
-    isDetected:         false,
-    confidence:         0,
-    detectionMethod:    'combo',
-    elapsedSeconds:     0,
-    accelActive:        false,
-    micActive:          false,
-    accelScore:         0,
-    gyroScore:          0,
-    micScore:           0,
-    durationScore:      0,
+    isDetected: false,
+    confidence: 0,
+    detectionMethod: 'combo',
+    elapsedSeconds: 0,
+    accelActive: false,
+    micActive: false,
+    accelScore: 0,
+    gyroScore: 0,
+    micScore: 0,
+    durationScore: 0,
     falsePositiveGuard: false,
   });
 
   const { addMotion, addMic, getSnapshot, reset } = useRollingWindow();
 
-  const startTimeRef          = useRef(Date.now());
-  const consecutiveHighRef    = useRef(0);
-  const scoreHistoryRef       = useRef<number[]>([]); // last 15 scores for stability/trend
-  const lastMovementTimeRef   = useRef<number | null>(null); // when accel last showed movement
-  const detectedRef           = useRef(false); // idempotency guard
-  const accelActiveRef        = useRef(false);
-  const micActiveRef          = useRef(false);
-
-  // ── Lifecycle ─────────────────────────────────────────────────────────────
+  const startTimeRef = useRef(Date.now());
+  const consecutiveHighRef = useRef(0);
+  const scoreHistoryRef = useRef<number[]>([]);
+  const lastMovementTimeRef = useRef<number | null>(null);
+  const detectedRef = useRef(false);
+  const accelActiveRef = useRef(false);
+  const micActiveRef = useRef(false);
+  const warnedMicDeathRef = useRef(false);
+  const unsubscribeSensorDataRef = useRef<(() => void) | null>(null);
+  const usingNativeRef = useRef(false);
 
   useEffect(() => {
     startTimeRef.current = Date.now();
-    detectedRef.current  = false;
+    detectedRef.current = false;
+    warnedMicDeathRef.current = false;
     consecutiveHighRef.current = 0;
     scoreHistoryRef.current = [];
     lastMovementTimeRef.current = null;
+    accelActiveRef.current = false;
+    micActiveRef.current = false;
+    usingNativeRef.current = false;
+
     reset();
     confidenceEngine.resetSession();
 
-    // Block incoming notifications while napping
-    notificationBlocker.block().catch(() => {});
+    const startNative = async () => {
+      if (!napDetectionServiceBridge.isAvailable()) {
+        return false;
+      }
 
-    // Start accelerometer + gyroscope
-    motionService.start((sample: MotionSample) => {
-      accelActiveRef.current = true;
-      addMotion(sample);
-    });
+      try {
+        await napDetectionServiceBridge.start();
+        await napDetectionServiceBridge.startSensorCollection();
 
-    // Start microphone (async; may be denied — handled gracefully)
-    micService.start((sample: MicSample) => {
-      micActiveRef.current = true;
-      addMic(sample);
-    }).catch(() => {
-      micActiveRef.current = false;
-    });
+        unsubscribeSensorDataRef.current = napDetectionServiceBridge.onSensorDataStream((data) => {
+          usingNativeRef.current = true;
+          const nowTs = Date.now();
 
-    // Evaluation loop (task 2.10)
+          let accelVariance = 0;
+          if (data.accel && data.accel.length > 0) {
+            const mags = data.accel.map((v: [number, number, number]) =>
+              Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]),
+            );
+            const mean = mags.reduce((a: number, b: number) => a + b, 0) / mags.length;
+            accelVariance = mags.reduce((s: number, m: number) => s + (m - mean) * (m - mean), 0) / mags.length;
+          }
+
+          let gyroVariance = 0;
+          if (data.gyro && data.gyro.length > 0) {
+            const magsG = data.gyro.map((v: [number, number, number]) =>
+              Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]),
+            );
+            const meanG = magsG.reduce((a: number, b: number) => a + b, 0) / magsG.length;
+            gyroVariance = magsG.reduce((s: number, m: number) => s + (m - meanG) * (m - meanG), 0) / magsG.length;
+          }
+
+          if ((data.accel && data.accel.length > 0) || (data.gyro && data.gyro.length > 0)) {
+            const sample: MotionSample = {
+              timestamp: nowTs,
+              accelVariance,
+              gyroVariance,
+            };
+            accelActiveRef.current = true;
+            const { wasReset } = addMotion(sample);
+            if (wasReset) {
+              consecutiveHighRef.current = 0;
+              scoreHistoryRef.current = [];
+              lastMovementTimeRef.current = (Date.now() - startTimeRef.current) / 1000;
+            }
+          }
+
+          for (const micDataRaw of data.mic || []) {
+            try {
+              const micArr = micDataRaw as Uint8Array;
+              const dv = new DataView(micArr.buffer, micArr.byteOffset, micArr.byteLength);
+              const sampleCount = Math.floor(micArr.byteLength / 2);
+              if (sampleCount <= 0) continue;
+
+              let sumSq = 0;
+              for (let i = 0; i < sampleCount; i++) {
+                const v = dv.getInt16(i * 2, true);
+                sumSq += v * v;
+              }
+              const meanSq = sumSq / sampleCount;
+              const rms = Math.sqrt(meanSq) / 32768;
+              const meterDb = rms <= 1e-5 ? -140 : 20 * Math.log10(rms);
+
+              const sample: MicSample = { timestamp: nowTs, metering: meterDb };
+              micActiveRef.current = true;
+              warnedMicDeathRef.current = false;
+              addMic(sample);
+            } catch (e) {
+              console.warn('useSleepDetection: failed to convert native mic chunk', e);
+            }
+          }
+        });
+
+        usingNativeRef.current = true;
+        console.log('useSleepDetection: using native foreground sensor path');
+        return true;
+      } catch (error) {
+        console.warn('useSleepDetection: native foreground path unavailable, falling back to Expo sensors', error);
+        return false;
+      }
+    };
+
+    const startFallback = () => {
+      motionService.start((sample: MotionSample) => {
+        accelActiveRef.current = true;
+        const { wasReset } = addMotion(sample);
+        if (wasReset) {
+          consecutiveHighRef.current = 0;
+          scoreHistoryRef.current = [];
+          const elapsed = (Date.now() - startTimeRef.current) / 1000;
+          lastMovementTimeRef.current = elapsed;
+        }
+      });
+
+      micService
+        .start((sample: MicSample) => {
+          micActiveRef.current = true;
+          warnedMicDeathRef.current = false;
+          addMic(sample);
+        })
+        .catch((error) => {
+          console.warn('useSleepDetection: microphone failed to start', error);
+        });
+    };
+
+    void (async () => {
+      const nativeStarted = await startNative();
+      if (!nativeStarted) {
+        startFallback();
+      }
+    })();
+
     const evalId = setInterval(() => {
       if (detectedRef.current) return;
 
-      const elapsed = (Date.now() - startTimeRef.current) / 1_000;
+      const elapsed = (Date.now() - startTimeRef.current) / 1000;
       const { motionSamples, micSamples } = getSnapshot();
 
       const result = confidenceEngine.compute({
         motionSamples,
         micSamples,
-        elapsedSeconds:   elapsed,
+        elapsedSeconds: elapsed,
         thresholdMinutes,
         placement,
         placements,
       });
 
-      // Track score history for stability + trend checks (keep last 15 scores)
       scoreHistoryRef.current = [...scoreHistoryRef.current.slice(-14), result.score];
 
-      // Movement-adjusted minimum: if significant movement was detected recently,
-      // extend the detection window so the clock restarts from that movement.
-      // Prevents the min-time guard from being consumed while the user is still awake.
       if (result.accelScore < 45) {
-        lastMovementTimeRef.current = elapsed; // record elapsed seconds of last movement
+        lastMovementTimeRef.current = elapsed;
       }
+
       const primaryPlacement = (placements && placements[0]) ?? placement ?? 'mattress';
       const baseMin = getMinDetectionSeconds(primaryPlacement);
-      const movementMin = lastMovementTimeRef.current !== null
-        ? lastMovementTimeRef.current + 90  // require 90 s of stillness after last movement
-        : 0;
+      const movementMin =
+        lastMovementTimeRef.current !== null ? lastMovementTimeRef.current + 90 : 0;
       const effectiveMin = Math.max(baseMin, movementMin);
 
-      // Sustained trigger with hysteresis band:
-      //   score >= trigger (80)        → increment
-      //   trigger-8 <= score < trigger → hold (brief dip doesn't erase progress)
-      //   score < trigger-8 (< 72)     → reset (clearly not at sleep level)
       const trigger = getSleepScoreTrigger();
       if (result.score >= trigger && elapsed >= effectiveMin) {
         consecutiveHighRef.current += 1;
       } else if (result.score < trigger - 8) {
         consecutiveHighRef.current = 0;
       }
-      // In the band [72, 80): counter is held — neither incremented nor reset
 
-      // Stability gate: genuine sleep produces a steady, non-declining score.
-      // Fails if last 12 scores have high standard deviation (oscillation)
-      // or if the score trend over the last 8 scores is clearly declining.
       const history = scoreHistoryRef.current;
-      const isScoreStable = history.length < 12
-        ? true
-        : scoreStdDev(history.slice(-12)) < 12;
-      const isScoreTrendingOk = history.length < 8
-        ? true
-        : scoreSlope(history.slice(-8)) >= -2; // allow at most -2 pts/sec downward drift
+      const isScoreStable = history.length < 12 ? true : scoreStdDev(history.slice(-12)) < 12;
+      const isScoreTrendingOk = history.length < 8 ? true : scoreSlope(history.slice(-8)) >= -2;
 
       const shouldDetect =
         consecutiveHighRef.current >= DETECTION.SUSTAINED_HIGH_COUNT &&
@@ -199,7 +227,6 @@ export function useSleepDetection(thresholdMinutes: number, placement?: PhonePla
         detectedRef.current = true;
       }
 
-      // Determine detection method from which sensors are active + agree
       const method = resolveMethod(
         accelActiveRef.current,
         micActiveRef.current,
@@ -208,60 +235,43 @@ export function useSleepDetection(thresholdMinutes: number, placement?: PhonePla
       );
 
       setState({
-        isDetected:         shouldDetect,
-        confidence:         result.score,
-        detectionMethod:    method,
-        elapsedSeconds:     Math.round(elapsed),
-        accelActive:        accelActiveRef.current,
-        micActive:          micActiveRef.current,
-        accelScore:         result.accelScore,
-        gyroScore:          result.gyroScore,
-        micScore:           result.micScore,
-        durationScore:      result.durationScore,
+        isDetected: shouldDetect,
+        confidence: result.score,
+        detectionMethod: method,
+        elapsedSeconds: Math.round(elapsed),
+        accelActive: accelActiveRef.current,
+        micActive: micActiveRef.current,
+        accelScore: result.accelScore,
+        gyroScore: result.gyroScore,
+        micScore: result.micScore,
+        durationScore: result.durationScore,
         falsePositiveGuard: result.falsePositiveGuard,
       });
 
-      // Detect if mic died unexpectedly (killed by battery optimization)
-      if (micActiveRef.current && !micService.running) {
-        console.warn(`⚠️ useSleepDetection: MIC DIED at ${elapsed.toFixed(1)}s! (Battery optimization killed it)`);
+      if (micActiveRef.current && !micService.running && !warnedMicDeathRef.current) {
+        warnedMicDeathRef.current = true;
+        console.warn(
+          `useSleepDetection: mic stopped unexpectedly at ${elapsed.toFixed(1)}s (possible battery optimization)`
+        );
         micActiveRef.current = false;
       }
     }, EVAL_INTERVAL_MS);
 
-    // ── Mic recovery on screen-off (Redmi battery optimization workaround) ───
-    // If screen turns off, mic recording thread may be killed. Restart it on app foreground.
-    const appStateListener = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'background' && Platform.OS === 'android') {
-        // Screen turned off — try to restart mic in case it was killed
-        if (micActiveRef.current || micService.running) {
-          console.log('🎤 useSleepDetection: app backgrounded, attempting mic recovery');
-          micService.stop().catch(() => {});
-          setTimeout(() => {
-            micService.start((sample: MicSample) => {
-              micActiveRef.current = true;
-              addMic(sample);
-            }).catch(() => {
-              console.warn('🎤 useSleepDetection: mic recovery failed');
-              micActiveRef.current = false;
-            });
-          }, 500);
-        }
-      }
-    });
-
-    // ── Periodic mic health check (log every 5 seconds) ─────────────────────
     let lastHealthCheckTime = 0;
     const healthCheckInterval = setInterval(() => {
       const now = Date.now();
-      if (now - lastHealthCheckTime < 5000) return; // Check every 5s
+      if (now - lastHealthCheckTime < 5000) return;
       lastHealthCheckTime = now;
 
       const micUptime = micService.getUptime();
       const timeSinceLastMeter = micService.getTimeSinceLastMeter();
+
       if (micActiveRef.current && micUptime > 0) {
-        console.log(`🎤 MIC HEALTH: uptime=${Math.round(micUptime / 1000)}s, lastMeter=${timeSinceLastMeter}ms`);
+        console.log(
+          `MIC HEALTH: uptime=${Math.round(micUptime / 1000)}s, lastMeter=${timeSinceLastMeter}ms`
+        );
         if (timeSinceLastMeter > 3000) {
-          console.warn(`⚠️ MIC UNRESPONSIVE: No data for ${Math.round(timeSinceLastMeter / 1000)}s!`);
+          console.warn(`MIC UNRESPONSIVE: no data for ${Math.round(timeSinceLastMeter / 1000)}s`);
         }
       }
     }, 1000);
@@ -269,23 +279,25 @@ export function useSleepDetection(thresholdMinutes: number, placement?: PhonePla
     return () => {
       clearInterval(evalId);
       clearInterval(healthCheckInterval);
-      appStateListener.remove();
-      motionService.stop();
-      micService.stop().catch(() => {});
-      notificationBlocker.unblock().catch(() => {});
+      if (usingNativeRef.current) {
+        napDetectionServiceBridge.stopSensorCollection().catch(() => {});
+        napDetectionServiceBridge.stop().catch(() => {});
+      } else {
+        motionService.stop();
+        micService.stop().catch(() => {});
+      }
+      unsubscribeSensorDataRef.current?.();
     };
-  // thresholdMinutes is set once from navigation params and won't change
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // thresholdMinutes / placement params are set at screen entry.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // ── Manual tap fallback (task 2.15) ───────────────────────────────────────
 
   const onManualTap = useCallback(() => {
     if (detectedRef.current) return;
     detectedRef.current = true;
     setState((prev) => ({
       ...prev,
-      isDetected:      true,
+      isDetected: true,
       detectionMethod: 'manual_tap',
     }));
   }, []);
@@ -293,62 +305,58 @@ export function useSleepDetection(thresholdMinutes: number, placement?: PhonePla
   return { state, onManualTap };
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-/**
- * Returns the minimum elapsed seconds before sleep detection can fire.
- * Mattress and pocket have weaker motion signals, so they need more time
- * for the mic's breathing rhythm to establish a reliable score.
- */
 function getMinDetectionSeconds(placement: PhonePlacement): number {
   switch (placement) {
-    case 'hand':    return 210; // 3.5 min — grip relaxation is a clear, fast signal
-    case 'chest':   return 240; // 4 min
-    case 'mattress':return 300; // 5 min — accel blind, need breathing rhythm to stabilise
-    case 'pocket':  return 300; // 5 min — weakest overall signal
-    default:        return 240;
+    case 'hand':
+      return 210;
+    case 'chest':
+      return 240;
+    case 'mattress':
+      return 300;
+    case 'pocket':
+      return 300;
+    default:
+      return 240;
   }
 }
 
-/**
- * Computes the least-squares linear slope (points per eval) of a score series.
- * Negative slope = score is declining; used to block detection on a falling trend.
- */
 function scoreSlope(scores: number[]): number {
   const n = scores.length;
   if (n < 2) return 0;
+
   const xMean = (n - 1) / 2;
   const yMean = scores.reduce((a, b) => a + b, 0) / n;
-  let num = 0, den = 0;
-  for (let i = 0; i < n; i++) {
-    num += (i - xMean) * (scores[i] - yMean);
-    den += (i - xMean) ** 2;
+
+  let numerator = 0;
+  let denominator = 0;
+  for (let i = 0; i < n; i += 1) {
+    numerator += (i - xMean) * (scores[i] - yMean);
+    denominator += (i - xMean) ** 2;
   }
-  return den === 0 ? 0 : num / den;
+
+  return denominator === 0 ? 0 : numerator / denominator;
 }
 
-/**
- * Computes the population standard deviation of an array of numbers.
- * Used to detect oscillating confidence scores (awake user with intermittent quiet moments).
- */
 function scoreStdDev(scores: number[]): number {
-  if (scores.length < 2) return 0;
+  if (scores.length === 0) return 0;
+
   const mean = scores.reduce((a, b) => a + b, 0) / scores.length;
-  const variance = scores.reduce((s, v) => s + (v - mean) ** 2, 0) / scores.length;
+  const variance = scores.reduce((sum, value) => sum + (value - mean) ** 2, 0) / scores.length;
   return Math.sqrt(variance);
 }
 
 function resolveMethod(
   accelActive: boolean,
-  micActive:   boolean,
-  accelScore:  number,
-  micScore:    number,
+  micActive: boolean,
+  accelScore: number,
+  micScore: number,
 ): DetectionMethod {
   const accelAgrees = accelActive && accelScore >= 50;
-  const micAgrees   = micActive   && micScore   >= 40;
+  const micAgrees = micActive && micScore >= 40;
 
   if (accelAgrees && micAgrees) return 'combo';
-  if (accelAgrees)              return 'accelerometer';
-  if (micAgrees)                return 'mic';
-  return 'accelerometer'; // default — at least the accel was sampling
+  if (accelAgrees) return 'accelerometer';
+  if (micAgrees) return 'mic';
+
+  return accelActive ? 'accelerometer' : 'mic';
 }

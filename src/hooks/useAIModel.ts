@@ -54,6 +54,18 @@ export interface AIModelResult {
 // ── Feature extraction (Task 4.2) ────────────────────────────────────────────
 
 /**
+ * Filters sessions to only those from the last N days
+ * @param sessions - All NapSession history
+ * @param days - Number of days to look back
+ * @returns Sessions within the last N days (ordered by date)
+ */
+export function sessionsFromLastDays(sessions: NapSession[], days: number): NapSession[] {
+  const now = new Date();
+  const cutoffDate = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+  return sessions.filter((s) => new Date(s.date) >= cutoffDate);
+}
+
+/**
  * Converts sessions to training rows for LinearRegression
  * @param sessions - NapSession history (only sessions with wake_rating are kept)
  * @returns Array of TrainingRow with prev_latency from the previous session
@@ -86,9 +98,12 @@ export function useAIModel(): AIModelResult {
   });
 
   const run = useCallback(async () => {
-    const sessions = await sessionService.loadAll();
+    const allSessions = await sessionService.loadAll();
 
-    if (sessions.length < ADAPTIVE.AI_ACTIVATION_SESSION) {
+    // Filter to sessions from the last 30 days
+    const sessions = sessionsFromLastDays(allSessions, ADAPTIVE.AI_ACTIVATION_DAYS);
+
+    if (sessions.length === 0) {
       setResult({ isPredicting: false, predictedLatency: 0, confidence: 0, isAIActive: false });
       return;
     }
